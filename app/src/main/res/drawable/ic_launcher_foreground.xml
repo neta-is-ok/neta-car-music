@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 按比例留白，相当于 108dp 图层内约 14dp，随桌面图标大小缩放。 -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:inset="13%">
+    <bitmap
+        android:src="@drawable/neta_music_icon"
+        android:gravity="fill"
+        android:filter="true" />
+</inset>

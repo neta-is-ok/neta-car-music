@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="app_launch_background">#FFFFF8F1</color>
+    <!-- 小组件首次加载沿用朱红暖金配色。 -->
+    <color name="widget_loading_surface">#FFF6ECE2</color>
+    <color name="widget_loading_ink">#FFB12F22</color>
+</resources>

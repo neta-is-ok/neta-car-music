@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 保留电视入口的 320×180dp 横幅，使用本应用图标。 -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:width="320dp" android:height="180dp" android:drawable="@drawable/ic_launcher_background" />
+    <item android:width="180dp" android:height="180dp" android:gravity="center" android:drawable="@drawable/neta_music_icon" />
+</layer-list>

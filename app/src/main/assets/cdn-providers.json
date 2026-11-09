@@ -1,0 +1,442 @@
+[
+  {
+    "name": "青竹藏锋",
+    "prefix": "https://gh.jjj.gv.uy/",
+    "sourceName": "AKAMS 节点 29",
+    "status": "OK",
+    "httpCode": "200",
+    "speedMbps": 293.904,
+    "latencyMs": 2501.6,
+    "md5Match": true
+  },
+  {
+    "name": "五座天下",
+    "prefix": "https://git.yylx.win/",
+    "sourceName": "五座天下",
+    "status": "OK",
+    "httpCode": "200",
+    "speedMbps": 279.799,
+    "latencyMs": 2627.7,
+    "md5Match": true
+  },
+  {
+    "name": "清风为邻",
+    "prefix": "https://ghm.078465.xyz/",
+    "sourceName": "AKAMS 节点 12",
+    "status": "OK",
+    "httpCode": "200",
+    "speedMbps": 262.89,
+    "latencyMs": 2796.7,
+    "md5Match": true
+  },
+  {
+    "name": "合体清心",
+    "prefix": "https://gh-proxy.com/",
+    "sourceName": "合体清心",
+    "status": "OK",
+    "httpCode": "200",
+    "speedMbps": 220.485,
+    "latencyMs": 3334.6,
+    "md5Match": true
+  },
+  {
+    "name": "红尘渐远",
+    "prefix": "https://v4.gh-proxy.org/",
+    "sourceName": "红尘渐远",
+    "status": "OK",
+    "httpCode": "200",
+    "speedMbps": 191.045,
+    "latencyMs": 3848.5,
+    "md5Match": true
+  },
+  {
+    "name": "人间过客",
+    "prefix": "https://gh.acmsz.top/",
+    "sourceName": "人间过客",
+    "status": "OK",
+    "httpCode": "200",
+    "speedMbps": 181.706,
+    "latencyMs": 4046.3,
+    "md5Match": true
+  },
+  {
+    "name": "乾蓝寒焰",
+    "prefix": "https://github.chenc.dev/",
+    "sourceName": "乾蓝寒焰",
+    "status": "OK",
+    "httpCode": "200",
+    "speedMbps": 135.605,
+    "latencyMs": 5421.9,
+    "md5Match": true
+  },
+  {
+    "name": "心栖山林",
+    "prefix": "https://gh.qwq.lu/",
+    "sourceName": "AKAMS 节点 91",
+    "status": "OK",
+    "httpCode": "200",
+    "speedMbps": 106.829,
+    "latencyMs": 6882.4,
+    "md5Match": true
+  },
+  {
+    "name": "一剑心安",
+    "prefix": "https://gitproxy.mrhjx.cn/",
+    "sourceName": "煮酒观山",
+    "status": "OK",
+    "httpCode": "200",
+    "speedMbps": 77.541,
+    "latencyMs": 9481.9,
+    "md5Match": true
+  },
+  {
+    "name": "嘉元城",
+    "prefix": "https://gh.monlor.com/",
+    "sourceName": "嘉元城",
+    "status": "OK",
+    "httpCode": "200",
+    "speedMbps": 72.339,
+    "latencyMs": 10163.8,
+    "md5Match": true
+  },
+  {
+    "name": "婆娑洲",
+    "prefix": "https://ghgo.de5.net/",
+    "sourceName": "AKAMS 节点 81",
+    "status": "OK",
+    "httpCode": "200",
+    "speedMbps": 71.113,
+    "latencyMs": 10339.0,
+    "md5Match": true
+  },
+  {
+    "name": "归隐不问年",
+    "prefix": "https://ghfast.top/",
+    "sourceName": "归隐不问年",
+    "status": "OK",
+    "httpCode": "200",
+    "speedMbps": 63.038,
+    "latencyMs": 11663.4,
+    "md5Match": true
+  },
+  {
+    "name": "归隐仙山",
+    "prefix": "https://gh.qfmc0721.cc.cd/",
+    "sourceName": "归隐仙山",
+    "status": "OK",
+    "httpCode": "200",
+    "speedMbps": 62.79,
+    "latencyMs": 11709.4,
+    "md5Match": true
+  },
+  {
+    "name": "放下江湖",
+    "prefix": "https://777.z321.cc.cd/",
+    "sourceName": "放下江湖",
+    "status": "OK",
+    "httpCode": "200",
+    "speedMbps": 62.26,
+    "latencyMs": 11809.1,
+    "md5Match": true
+  },
+  {
+    "name": "江湖远路",
+    "prefix": "https://gh.chjina.com/",
+    "sourceName": "江湖远路",
+    "status": "OK",
+    "httpCode": "200",
+    "speedMbps": 59.357,
+    "latencyMs": 12386.7,
+    "md5Match": true
+  },
+  {
+    "name": "坠魔谷",
+    "prefix": "https://ghpxy.hwinzniej.top/",
+    "sourceName": "坠魔谷",
+    "status": "OK",
+    "httpCode": "200",
+    "speedMbps": 58.953,
+    "latencyMs": 12471.6,
+    "md5Match": true
+  },
+  {
+    "name": "北寒仙域",
+    "prefix": "https://free.cn.eu.org/",
+    "sourceName": "北寒仙域",
+    "status": "OK",
+    "httpCode": "200",
+    "speedMbps": 57.529,
+    "latencyMs": 12780.3,
+    "md5Match": true
+  },
+  {
+    "name": "玄源洞天",
+    "prefix": "https://down.mxw.xx.kg/",
+    "sourceName": "风元大陆",
+    "status": "OK",
+    "httpCode": "200",
+    "speedMbps": 57.107,
+    "latencyMs": 12874.8,
+    "md5Match": true
+  },
+  {
+    "name": "竹楼听风",
+    "prefix": "https://github.tbap.top/",
+    "sourceName": "清风为邻",
+    "status": "OK",
+    "httpCode": "200",
+    "speedMbps": 52.865,
+    "latencyMs": 13907.8,
+    "md5Match": true
+  },
+  {
+    "name": "冰凤岛",
+    "prefix": "https://github-proxy.memory-echoes.cn/",
+    "sourceName": "冰凤岛",
+    "status": "OK",
+    "httpCode": "200",
+    "speedMbps": 51.234,
+    "latencyMs": 14350.6,
+    "md5Match": true
+  },
+  {
+    "name": "七派盟",
+    "prefix": "https://ghp.keleyaa.com/",
+    "sourceName": "玄源洞天",
+    "status": "OK",
+    "httpCode": "200",
+    "speedMbps": 51.047,
+    "latencyMs": 14403.1,
+    "md5Match": true
+  },
+  {
+    "name": "不问功名",
+    "prefix": "https://github.ednovas.xyz/",
+    "sourceName": "不问功名",
+    "status": "OK",
+    "httpCode": "200",
+    "speedMbps": 49.372,
+    "latencyMs": 14891.7,
+    "md5Match": true
+  },
+  {
+    "name": "炼虚远尘",
+    "prefix": "https://gh.b52m.cn/",
+    "sourceName": "渡劫离凡",
+    "status": "OK",
+    "httpCode": "200",
+    "speedMbps": 48.207,
+    "latencyMs": 15251.7,
+    "md5Match": true
+  },
+  {
+    "name": "山居安然",
+    "prefix": "https://jiashu.1win.eu.org/",
+    "sourceName": "山居安然",
+    "status": "OK",
+    "httpCode": "200",
+    "speedMbps": 47.505,
+    "latencyMs": 15477.1,
+    "md5Match": true
+  },
+  {
+    "name": "青冥天下",
+    "prefix": "https://all.hlmirror.com/",
+    "sourceName": "青冥天下",
+    "status": "OK",
+    "httpCode": "200",
+    "speedMbps": 44.092,
+    "latencyMs": 16675.1,
+    "md5Match": true
+  },
+  {
+    "name": "乱星海",
+    "prefix": "https://ghproxy.icu/",
+    "sourceName": "烛龙道",
+    "status": "OK",
+    "httpCode": "200",
+    "speedMbps": 40.775,
+    "latencyMs": 18031.6,
+    "md5Match": true
+  },
+  {
+    "name": "渡劫离凡",
+    "prefix": "https://tvv.tw/",
+    "sourceName": "大乘忘俗",
+    "status": "OK",
+    "httpCode": "200",
+    "speedMbps": 40.518,
+    "latencyMs": 18145.8,
+    "md5Match": true
+  },
+  {
+    "name": "剑落心安",
+    "prefix": "https://github.mxw.qzz.io/",
+    "sourceName": "剑落心安",
+    "status": "OK",
+    "httpCode": "200",
+    "speedMbps": 36.673,
+    "latencyMs": 20048.4,
+    "md5Match": true
+  },
+  {
+    "name": "桐叶洲",
+    "prefix": "https://gh.dpik.top/",
+    "sourceName": "桐叶洲",
+    "status": "OK",
+    "httpCode": "200",
+    "speedMbps": 35.244,
+    "latencyMs": 20861.6,
+    "md5Match": true
+  },
+  {
+    "name": "孤心问道",
+    "prefix": "https://gh.meali.top/",
+    "sourceName": "AKAMS 节点 61",
+    "status": "OK",
+    "httpCode": "200",
+    "speedMbps": 33.206,
+    "latencyMs": 22142.0,
+    "md5Match": true
+  },
+  {
+    "name": "龙须河",
+    "prefix": "https://ghfile.geekertao.top/",
+    "sourceName": "龙须河",
+    "status": "OK",
+    "httpCode": "200",
+    "speedMbps": 32.268,
+    "latencyMs": 22785.7,
+    "md5Match": true
+  },
+  {
+    "name": "云霞山",
+    "prefix": "https://fastgit.cc/",
+    "sourceName": "云霞山",
+    "status": "OK",
+    "httpCode": "200",
+    "speedMbps": 31.592,
+    "latencyMs": 23272.5,
+    "md5Match": true
+  },
+  {
+    "name": "苍狼岭",
+    "prefix": "https://gh.ddlc.top/",
+    "sourceName": "AKAMS 节点 36",
+    "status": "OK",
+    "httpCode": "200",
+    "speedMbps": 31.541,
+    "latencyMs": 23310.8,
+    "md5Match": true
+  },
+  {
+    "name": "山中无岁",
+    "prefix": "https://gh-proxy.org/",
+    "sourceName": "风雨不问",
+    "status": "OK",
+    "httpCode": "200",
+    "speedMbps": 31.304,
+    "latencyMs": 23487.3,
+    "md5Match": true
+  },
+  {
+    "name": "皑皑洲",
+    "prefix": "https://gh.my-website.ccwu.cc/",
+    "sourceName": "皑皑洲",
+    "status": "OK",
+    "httpCode": "200",
+    "speedMbps": 30.226,
+    "latencyMs": 24325.0,
+    "md5Match": true
+  },
+  {
+    "name": "静坐观云",
+    "prefix": "https://gg.z321.cc.cd/",
+    "sourceName": "静坐观云",
+    "status": "OK",
+    "httpCode": "200",
+    "speedMbps": 29.997,
+    "latencyMs": 24510.0,
+    "md5Match": true
+  },
+  {
+    "name": "火龙山",
+    "prefix": "https://gh.inkchills.cn/",
+    "sourceName": "火龙山",
+    "status": "OK",
+    "httpCode": "200",
+    "speedMbps": 28.607,
+    "latencyMs": 25701.5,
+    "md5Match": true
+  },
+  {
+    "name": "大乘忘俗",
+    "prefix": "https://github.ikgy.top/",
+    "sourceName": "炼虚远尘",
+    "status": "OK",
+    "httpCode": "200",
+    "speedMbps": 28.536,
+    "latencyMs": 25765.2,
+    "md5Match": true
+  },
+  {
+    "name": "阗天城",
+    "prefix": "https://gh.idayer.com/",
+    "sourceName": "阗天城",
+    "status": "OK",
+    "httpCode": "200",
+    "speedMbps": 28.016,
+    "latencyMs": 26243.7,
+    "md5Match": true
+  },
+  {
+    "name": "紫罗真火",
+    "prefix": "https://proxyd.picpi.top/",
+    "sourceName": "紫罗真火",
+    "status": "OK",
+    "httpCode": "200",
+    "speedMbps": 27.599,
+    "latencyMs": 26639.6,
+    "md5Match": true
+  },
+  {
+    "name": "风雨不问",
+    "prefix": "https://xsadwsd.kdns.fr/",
+    "sourceName": "白玉京",
+    "status": "OK",
+    "httpCode": "200",
+    "speedMbps": 18.508,
+    "latencyMs": 39724.4,
+    "md5Match": true
+  },
+  {
+    "name": "黑风海域",
+    "prefix": "https://cdn.akaere.online/",
+    "sourceName": "黑风海域",
+    "status": "OK",
+    "httpCode": "200",
+    "speedMbps": 18.148,
+    "latencyMs": 40513.7,
+    "md5Match": true
+  },
+  {
+    "name": "天星城",
+    "prefix": "https://gh.catmak.name/",
+    "sourceName": "心无俗念",
+    "status": "OK",
+    "httpCode": "200",
+    "speedMbps": 15.942,
+    "latencyMs": 46119.1,
+    "md5Match": true
+  },
+  {
+    "name": "白玉京",
+    "prefix": "https://g.z321.cc.cd/",
+    "sourceName": "竹楼听风",
+    "status": "OK",
+    "httpCode": "200",
+    "speedMbps": 12.874,
+    "latencyMs": 57110.9,
+    "md5Match": true
+  }
+]

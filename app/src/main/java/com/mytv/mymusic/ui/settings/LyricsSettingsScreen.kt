@@ -1,0 +1,579 @@
+package com.mytv.mymusic.ui.settings
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.Shuffle
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialShapes
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.toShape
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import coil3.compose.AsyncImage
+import coil3.request.ImageRequest
+import com.mytv.mymusic.data.CoverShapeChoice
+import com.mytv.mymusic.data.LyricSubline
+import com.mytv.mymusic.data.LyricsBackgroundMode
+import com.mytv.mymusic.data.MiniPlayerTarget
+import com.mytv.mymusic.data.RHYTHM_OFFSET_MAX_MS
+import com.mytv.mymusic.data.RhythmIntensity
+import com.mytv.mymusic.data.TabletopTop
+import com.mytv.mymusic.ui.MusicActions
+import com.mytv.mymusic.ui.MusicUiState
+import com.mytv.mymusic.ui.components.ConnectedToggleGroup
+import com.mytv.mymusic.ui.components.LocalAppWindow
+import com.mytv.mymusic.ui.SystemScriptConverter
+import com.mytv.mymusic.ui.components.ListRow
+import com.mytv.mymusic.ui.components.SectionLabel
+import com.mytv.mymusic.ui.components.SegmentedGroup
+import com.mytv.mymusic.ui.components.SwitchRow
+import com.mytv.mymusic.ui.components.segmentShape
+import com.mytv.mymusic.ui.components.tvFocusRing
+import com.mytv.mymusic.ui.player.label
+import com.mytv.mymusic.ui.player.polygon
+import com.mytv.mymusic.ui.player.rhythmDebugAvailable
+import com.mytv.mymusic.ui.player.stage.AnimationSheet
+import com.mytv.mymusic.ui.player.stage.LyricVisualizers
+import com.mytv.mymusic.ui.player.stage.label
+import com.mytv.mymusic.ui.theme.PlayerTheme
+
+internal val LyricsBackgroundMode.label: String
+    get() = when (this) {
+        LyricsBackgroundMode.Off -> "关闭"
+        LyricsBackgroundMode.Ambient -> "动态"
+        LyricsBackgroundMode.Reactive -> "律动"
+    }
+
+internal val RhythmIntensity.label: String
+    get() = when (this) {
+        RhythmIntensity.Soft -> "柔和"
+        RhythmIntensity.Standard -> "标准"
+        RhythmIntensity.Strong -> "强烈"
+    }
+
+internal val TabletopTop.label: String
+    get() = when (this) {
+        TabletopTop.Lyrics -> "歌词"
+        TabletopTop.Cover -> "封面"
+        TabletopTop.Clock -> "时钟"
+    }
+
+internal val LyricSubline.label: String
+    get() = when (this) {
+        LyricSubline.Translation -> "翻译"
+        LyricSubline.Romanization -> "罗马音"
+        LyricSubline.Both -> "都显示"
+    }
+
+internal val MiniPlayerTarget.label: String
+    get() = when (this) {
+        MiniPlayerTarget.Player -> "播放页"
+        MiniPlayerTarget.PosterWall -> "海报墙"
+    }
+
+/**
+ * 设置 → 播放页（枚举仍叫 Lyrics）：封面形状、歌词背景、歌词动画和歌词文字、系统媒体条歌词、律动强度和跟拍校准、
+ * 点按迷你播放器打开什么；折叠屏展开时加桌面姿态上半屏放什么，电视上再加环境模式时钟。都只存在本机，改了立即生效。
+ */
+@Composable
+fun LyricsSettingsScreen(
+    state: MusicUiState,
+    actions: MusicActions,
+    onBack: () -> Unit,
+    embedded: Boolean = false,
+) {
+    val window = LocalAppWindow.current
+    val mode = state.lyricsBackground
+    val debuggable = rhythmDebugAvailable()
+    var animationOpen by rememberSaveable { mutableStateOf(false) }
+    if (animationOpen) {
+        // 和全屏歌词页右上角 ✦ 打开的是同一个面板，套播放页的深色配色；这里没有“这首歌”，点模式改的是默认模式
+        PlayerTheme {
+            AnimationSheet(
+                prefs = state.lyricStage,
+                song = state.current,
+                shown = state.lyricStage.visualizer,
+                actions = actions,
+                onPick = { id -> actions.setLyricStage { it.copy(visualizer = id) } },
+                onPin = null,
+                onDismiss = { animationOpen = false },
+            )
+        }
+    }
+    val stage = state.lyricStage
+    val text = state.lyricText
+    SettingsPage(SettingsSection.Lyrics, embedded, onBack) {
+        item(key = "shapeHead", contentType = "sectionHeader") { SectionLabel("封面形状") }
+        item(key = "shapes", contentType = "coverShapes") {
+            CoverShapePicker(
+                selected = state.coverShape,
+                cover = state.current?.cover.orEmpty(),
+                tv = window.isTv,
+                onSelect = actions::setCoverShape,
+            )
+        }
+        item(key = "shapeNote", contentType = "note") {
+            SettingsNote("随机：每次切歌换一种，不和上一首重复。选了具体形状后所有歌都用它。暂停时都会变成圆角方形。")
+        }
+        item(key = "backgroundHead", contentType = "sectionHeader") { SectionLabel("显示歌词背景") }
+        item(key = "background", contentType = "lyricsOptions") {
+            Column {
+                ConnectedToggleGroup(
+                    options = LyricsBackgroundMode.entries,
+                    selected = mode,
+                    onSelect = actions::setLyricsBackground,
+                    label = { it.label },
+                    modifier = Modifier.widthIn(max = 480.dp).fillMaxWidth(),
+                )
+                SettingsNote(
+                    when (mode) {
+                        LyricsBackgroundMode.Off -> "播放页使用纯色背景，封面和歌词内容不受影响。"
+                        LyricsBackgroundMode.Ambient -> "取自封面颜色的几团光在背景里缓慢漂移，不随音乐变化。"
+                        LyricsBackgroundMode.Reactive -> "段落的强弱调节光团的流速和光量；听得出拍子时，光晕、封面和流光按拍子律动，和你听到的声音对齐。整屏不会跟着鼓点闪白。"
+                    },
+                )
+            }
+        }
+        item(key = "stageHead", contentType = "sectionHeader") { SectionLabel("歌词动画") }
+        item(key = "stage", contentType = "lyricStage") {
+            SegmentedGroup {
+                ListRow(
+                    title = "全屏歌词动画",
+                    index = 0,
+                    count = 3,
+                    onClick = { animationOpen = true },
+                    summary = "只在全屏歌词页生效",
+                    value = LyricVisualizers.byId(stage.visualizer).label,
+                )
+                ListRow(
+                    title = "每首歌换动画",
+                    index = 1,
+                    count = 3,
+                    onClick = { animationOpen = true },
+                    value = stage.auto.label,
+                )
+                SwitchRow(
+                    title = "频谱",
+                    checked = stage.spectrum,
+                    onCheckedChange = { on -> actions.setLyricStage { it.copy(spectrum = on) } },
+                    index = 2,
+                    count = 3,
+                    summary = "全屏歌词页左下角",
+                )
+            }
+        }
+        item(key = "stageNote", contentType = "note") {
+            SettingsNote("全屏歌词页右上角的 ✦ 打开的是同一个面板。")
+        }
+        item(key = "textHead", contentType = "sectionHeader") { SectionLabel("歌词文字") }
+        item(key = "text", contentType = "lyricText") {
+            SegmentedGroup {
+                SwitchRow(
+                    title = "拆分单行双语",
+                    checked = text.splitBilingual,
+                    onCheckedChange = { on -> actions.setLyricText { it.copy(splitBilingual = on) } },
+                    index = 0,
+                    count = 3,
+                    summary = "“原文 / 译文”写在同一行的歌词，拆成原文和翻译",
+                )
+                SwitchRow(
+                    title = "简体转繁体",
+                    checked = text.traditional && SystemScriptConverter.traditionalAvailable,
+                    onCheckedChange = { on -> actions.setLyricText { it.copy(traditional = on) } },
+                    index = 1,
+                    count = 3,
+                    summary = if (SystemScriptConverter.traditionalAvailable) "逐字转换，个别字转不准" else "需要 Android 10 及以上",
+                    enabled = SystemScriptConverter.traditionalAvailable,
+                )
+                SwitchRow(
+                    title = "没有罗马音时自动转写",
+                    checked = text.autoRomanize && SystemScriptConverter.romanizeAvailable,
+                    onCheckedChange = { on -> actions.setLyricText { it.copy(autoRomanize = on) } },
+                    index = 2,
+                    count = 3,
+                    summary = if (SystemScriptConverter.romanizeAvailable) "只转韩文、假名和西里尔字母，汉字不转" else "需要 Android 10 及以上",
+                    enabled = SystemScriptConverter.romanizeAvailable,
+                )
+            }
+        }
+        item(key = "sublineHead", contentType = "sectionHeader") { SectionLabel("歌词下面那一行") }
+        item(key = "subline", contentType = "toggleGroup") {
+            ConnectedToggleGroup(
+                options = LyricSubline.entries,
+                selected = stage.subline,
+                onSelect = { value -> actions.setLyricStage { it.copy(subline = value) } },
+                label = { it.label },
+                modifier = Modifier.widthIn(max = 480.dp).fillMaxWidth(),
+            )
+        }
+        item(key = "textNote", contentType = "note") {
+            SettingsNote("前三项对全屏歌词页、系统媒体播放条、桌面小组件和海报墙都生效；最后一项只影响播放页。歌词没有罗马音时，选“罗马音”显示翻译。")
+        }
+        item(key = "notificationHead", contentType = "sectionHeader") { SectionLabel("系统媒体播放条") }
+        item(key = "notification", contentType = "switch") {
+            SwitchRow(
+                title = "显示当前歌词",
+                checked = state.notificationLyrics,
+                onCheckedChange = actions::setNotificationLyrics,
+                index = 0,
+                count = 1,
+                summary = "把当前这句歌词放到系统通知、锁屏等媒体播放条的第二行，歌手名会被替换；歌词不同步时仍显示歌手。",
+            )
+        }
+        item(key = "appleLyricHead", contentType = "sectionHeader") { SectionLabel("Apple Music 歌词") }
+        item(key = "appleLyricProxy", contentType = "switch") {
+            SwitchRow(
+                title = "使用第三方歌词中转",
+                checked = state.thirdPartyLyrics,
+                onCheckedChange = actions::setThirdPartyLyrics,
+                index = 0,
+                count = 1,
+                summary = "Apple Music 已不再向未登录用户提供歌词。开启后由 zarz.moe、paxsenix、AMLL 等社区服务代为取回逐词歌词；请求会把 Apple Music 歌曲 ID 发给这些服务。关掉后只走 Apple 官方接口，未登录时将没有歌词。",
+            )
+        }
+        item(key = "appleLyricNote", contentType = "note") {
+            SettingsNote("三个来源按顺序尝试，全部失败时该首歌曲不显示歌词。这些是社区运营的公共服务，可能随时过载或下线。")
+        }
+        // 强度只对“律动”有意义；开启“减少动画”时背景回退成静止，但选项照常显示
+        if (mode == LyricsBackgroundMode.Reactive) {
+            item(key = "intensityHead", contentType = "sectionHeader") { SectionLabel("律动强度") }
+            item(key = "intensity", contentType = "toggleGroup") {
+                ConnectedToggleGroup(
+                    options = RhythmIntensity.entries,
+                    selected = state.rhythmIntensity,
+                    onSelect = actions::setRhythmIntensity,
+                    label = { it.label },
+                    modifier = Modifier.widthIn(max = 480.dp).fillMaxWidth(),
+                )
+            }
+            item(key = "intensityNote", contentType = "note") {
+                SettingsNote("柔和只有光晕和流光跟拍。标准再加上封面弹跳，小节首拍从封面轮廓散开一圈光。强烈弹得更明显，每一拍都有光环。")
+            }
+            item(key = "offsetHead", contentType = "sectionHeader") { SectionLabel("跟拍校准") }
+            item(key = "offset", contentType = "rhythmOffset") { RhythmOffsetRow(state.rhythmOffsetMs, actions::setRhythmOffset) }
+            item(key = "offsetNote", contentType = "note") {
+                SettingsNote("律动总比鼓点早或晚一点时在这里调（蓝牙耳机、外接音箱常见）：正数让画面晚一点，负数提前。只影响本机。")
+            }
+            if (debuggable) {
+                item(key = "rhythmDebug", contentType = "switch") {
+                    SwitchRow(
+                        title = "显示跟拍调试信息",
+                        checked = state.rhythmDebug,
+                        onCheckedChange = actions::setRhythmDebug,
+                        index = 0,
+                        count = 1,
+                        summary = "播放页左上角显示速度、置信度、分析领先量，每拍闪一下",
+                    )
+                }
+            }
+            item(key = "reactiveNote", contentType = "note") {
+                SettingsNote(
+                    "律动直接分析本机正在播放的音频，不申请麦克风权限，也不保存或上传音频。" +
+                        "暂停、离开播放页或开启“减少动画”时停止分析；重新播放后会重新适应当前歌曲的动态范围。",
+                )
+            }
+        }
+        item(key = "miniTargetHead", contentType = "sectionHeader") { SectionLabel("点按迷你播放器打开") }
+        item(key = "miniTarget", contentType = "toggleGroup") {
+            ConnectedToggleGroup(
+                options = MiniPlayerTarget.entries,
+                selected = state.miniPlayerTarget,
+                onSelect = actions::setMiniPlayerTarget,
+                label = { it.label },
+                modifier = Modifier.widthIn(max = 480.dp).fillMaxWidth(),
+            )
+        }
+        item(key = "miniTargetNote", contentType = "note") {
+            SettingsNote(
+                when {
+                    window.isTv -> "导航栏顶上的“正在播放”打开哪一页。海报墙把播放队列铺成一面封面墙，正在放的歌放大显示歌词；墙上的“打开播放页”随时可以切过去。"
+                    window.isPhone -> "海报墙把播放队列铺成一面封面墙，正在放的歌放大显示歌词。选了海报墙，上滑迷你播放器仍然打开播放页。"
+                    else -> "点按底部播放条的封面和歌名、播放窗格的封面时打开哪一页。海报墙把播放队列铺成一面封面墙，正在放的歌放大显示歌词；“打开播放页”“全屏播放”按钮不受影响。"
+                },
+            )
+        }
+        // 只在窗口横跨折痕（折叠屏内屏展开、双屏横跨）时才有意义，外屏、分屏里不显示
+        if (window.fold != null && !window.isTv) {
+            item(key = "tabletopHead", contentType = "sectionHeader") { SectionLabel("折叠屏桌面姿态") }
+            item(key = "tabletop", contentType = "toggleGroup") {
+                ConnectedToggleGroup(
+                    options = TabletopTop.entries,
+                    selected = state.tabletopTop,
+                    onSelect = actions::setTabletopTop,
+                    label = { it.label },
+                    modifier = Modifier.widthIn(max = 480.dp).fillMaxWidth(),
+                )
+            }
+            item(key = "tabletopNote", contentType = "note") {
+                SettingsNote("屏幕半折、像小桌板一样立着时，播放页上半屏放什么；下半屏固定是进度和播放控制，不会自动隐藏。播放页开着时半折才会切过去，在别的页面半折不打断浏览。")
+            }
+        }
+        // 强制电视布局也算电视：环境模式只在电视播放页出现
+        if (window.isTv) {
+            item(key = "tvHead", contentType = "sectionHeader") { SectionLabel("电视") }
+            item(key = "tvClock", contentType = "switch") {
+                SwitchRow(
+                    title = "环境模式显示时钟",
+                    checked = state.tvAmbientClock,
+                    onCheckedChange = actions::setTvAmbientClock,
+                    index = 0,
+                    count = 2,
+                    summary = "空闲 4 秒进入环境模式后，右上角显示时间（跟随系统 12/24 小时制）",
+                )
+            }
+            item(key = "keepScreenOn", contentType = "switch") {
+                SwitchRow(
+                    title = "播放时阻止屏保",
+                    checked = state.keepScreenOn,
+                    onCheckedChange = actions::setKeepScreenOn,
+                    index = 1,
+                    count = 2,
+                    summary = "播放期间屏幕保持常亮，系统屏保不再启动；OLED 屏幕有烧屏风险，息屏听歌、离开应用都不受影响",
+                )
+            }
+            item(key = "keepScreenOnNote", contentType = "note") {
+                SettingsNote("系统屏保是屏幕超时才启动的，所以只有“屏幕常亮”能拦住它。电视自己拉的第三方屏保界面拦不住，那种情况下音乐会继续放。")
+            }
+            item(key = "tvBackgroundPlay", contentType = "switch") {
+                SwitchRow(
+                    title = "后台播放",
+                    checked = state.tvBackgroundPlay,
+                    onCheckedChange = actions::setTvBackgroundPlay,
+                    index = 2,
+                    count = 3,
+                    summary = "离开应用后音乐不中断：按 Home、切到别的应用、退出应用都接着放，和手机上一样",
+                )
+            }
+            item(key = "tvBackgroundPlayNote", contentType = "note") {
+                SettingsNote("要停就进应用按暂停，或者用通知栏、系统媒体控件上的停止。少数电视系统会自己清理后台应用，那种情况下音乐还是会停。")
+            }
+        }
+    }
+}
+
+/**
+ * 跟拍校准：−200..+200ms，一次 10ms。用两个按钮而不是滑块：电视遥控器上一下一格，手机上也能点到精确的值。
+ * 到头了按钮也不禁用（只是不再变），电视上焦点不会因为按钮变灰而跳走。
+ */
+@Composable
+private fun RhythmOffsetRow(value: Int, onChange: (Int) -> Unit) {
+    Row(
+        Modifier
+            .widthIn(max = 480.dp)
+            .fillMaxWidth()
+            .clip(segmentShape(0, 1))
+            .background(MaterialTheme.colorScheme.surfaceContainerLow)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        FilledTonalIconButton(
+            onClick = { onChange((value - RHYTHM_OFFSET_STEP_MS).coerceAtLeast(-RHYTHM_OFFSET_MAX_MS)) },
+            modifier = Modifier.tvFocusRing(CircleShape),
+        ) { Icon(Icons.Filled.Remove, contentDescription = "画面提前 10 毫秒") }
+        Text(
+            rhythmOffsetLabel(value),
+            Modifier.weight(1f).semantics { liveRegion = LiveRegionMode.Polite },
+            style = MaterialTheme.typography.titleMedium,
+            textAlign = TextAlign.Center,
+        )
+        FilledTonalIconButton(
+            onClick = { onChange((value + RHYTHM_OFFSET_STEP_MS).coerceAtMost(RHYTHM_OFFSET_MAX_MS)) },
+            modifier = Modifier.tvFocusRing(CircleShape),
+        ) { Icon(Icons.Filled.Add, contentDescription = "画面推迟 10 毫秒") }
+        TextButton(onClick = { onChange(0) }, modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp))) { Text("归零") }
+    }
+}
+
+internal fun rhythmOffsetLabel(ms: Int): String = when {
+    ms > 0 -> "画面晚 $ms 毫秒"
+    ms < 0 -> "画面早 ${-ms} 毫秒"
+    else -> "不调整"
+}
+
+private const val RHYTHM_OFFSET_STEP_MS = 10
+
+/**
+ * 形状选择器：手机和平板是卡片里的 4 列网格，电视一行 7 个（窄窗口的强制电视布局会自动换行）。
+ * 预览直接用当前播放的封面裁成对应形状，没在播放时用 primaryContainer 填色。
+ * 电视右栏只有约 496dp，预览缩到 54dp、间距 2dp，7 个正好排进一行（488dp）。
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun CoverShapePicker(
+    selected: CoverShapeChoice,
+    cover: String,
+    tv: Boolean,
+    onSelect: (CoverShapeChoice) -> Unit,
+) {
+    val context = LocalContext.current
+    val previewSize = if (tv) 54.dp else 56.dp
+    val px = with(LocalDensity.current) { previewSize.roundToPx() }
+    // 6 个预览共用一个小尺寸请求，内存缓存里只有一份
+    val request = remember(context, cover, px) {
+        cover.takeIf { it.isNotBlank() }?.let { ImageRequest.Builder(context).data(it).size(px).build() }
+    }
+    val option: @Composable (CoverShapeChoice) -> Unit = { choice ->
+        CoverShapeOption(choice, choice == selected, previewSize, request) { onSelect(choice) }
+    }
+    if (tv) {
+        FlowRow(
+            Modifier.fillMaxWidth().selectableGroup(),
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            CoverShapeChoice.entries.forEach { option(it) }
+        }
+        return
+    }
+    Column(
+        Modifier
+            .widthIn(max = 480.dp)
+            .fillMaxWidth()
+            .clip(segmentShape(0, 1))
+            .background(MaterialTheme.colorScheme.surfaceContainerLow)
+            .padding(horizontal = 4.dp, vertical = 8.dp)
+            .selectableGroup(),
+    ) {
+        CoverShapeChoice.entries.chunked(4).forEach { row ->
+            Row(Modifier.fillMaxWidth()) {
+                row.forEach { choice ->
+                    Box(Modifier.weight(1f), contentAlignment = Alignment.Center) { option(choice) }
+                }
+                repeat(4 - row.size) { Spacer(Modifier.weight(1f)) }
+            }
+        }
+    }
+}
+
+/**
+ * 单个选项：形状预览 + 名字。选中时外面 4dp 处画一圈 2.5dp 主色描边，右上角挂对勾。
+ * 内边距（左右 7dp、上下 8dp）刚好容下描边和对勾，电视焦点环画在整个选项外面，和选中描边分得开。
+ * 对勾往右上探出 4dp：再多就会被选项 20dp 的圆角裁掉一角（6dp 时约裁 2dp），加大内边距又会让电视一行排不下 7 个。
+ */
+@Composable
+private fun CoverShapeOption(
+    choice: CoverShapeChoice,
+    selected: Boolean,
+    previewSize: Dp,
+    cover: ImageRequest?,
+    onClick: () -> Unit,
+) {
+    val scheme = MaterialTheme.colorScheme
+    val optionShape = RoundedCornerShape(20.dp)
+    Column(
+        Modifier
+            .tvFocusRing(optionShape)
+            .clip(optionShape)
+            .selectable(selected = selected, role = Role.RadioButton, onClick = onClick)
+            .padding(horizontal = 7.dp, vertical = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Box(
+            Modifier
+                .size(previewSize)
+                .drawBehind {
+                    if (selected) {
+                        val stroke = 2.5.dp.toPx()
+                        drawCircle(
+                            scheme.primary,
+                            radius = size.minDimension / 2 + 4.dp.toPx() + stroke / 2,
+                            style = Stroke(stroke),
+                        )
+                    }
+                },
+        ) {
+            ShapePreview(choice, cover)
+            if (selected) {
+                Box(
+                    Modifier
+                        .align(Alignment.TopEnd)
+                        .offset(x = BadgeOverhang, y = -BadgeOverhang)
+                        .size(20.dp)
+                        .clip(CircleShape)
+                        .background(scheme.primary),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(Icons.Filled.Check, null, Modifier.size(14.dp), tint = scheme.onPrimary)
+                }
+            }
+        }
+        Text(
+            choice.label,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+            color = if (selected) scheme.onSurface else scheme.onSurfaceVariant,
+            maxLines = 1,
+        )
+    }
+}
+
+/** “随机”画成九瓣饼干加随机图标；具体形状裁当前封面，图还没加载出来时露出底色。 */
+@Composable
+private fun ShapePreview(choice: CoverShapeChoice, cover: ImageRequest?) {
+    val scheme = MaterialTheme.colorScheme
+    val polygon = choice.polygon
+    Box(
+        Modifier
+            .fillMaxSize()
+            .clip((polygon ?: MaterialShapes.Cookie9Sided).toShape())
+            .background(scheme.primaryContainer),
+        contentAlignment = Alignment.Center,
+    ) {
+        when {
+            polygon == null -> Icon(Icons.Filled.Shuffle, null, Modifier.size(26.dp), tint = scheme.onPrimaryContainer)
+            cover != null -> AsyncImage(
+                model = cover,
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop,
+            )
+        }
+    }
+}
+
+private val BadgeOverhang = 4.dp

@@ -1,0 +1,128 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [main, dev]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: github.event_name != 'workflow_dispatch' && !startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 21 }
+      - name: Install Android SDK packages
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;37.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Compile debug APK
+        run: ./gradlew :app:assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: neta-car-music-debug
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+  release:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: release-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read version and validate tag
+        id: version
+        run: |
+          version=$(sed -n 's/^versionName=//p' version.properties)
+          code=$(sed -n 's/^versionCode=//p' version.properties)
+          tag="v${version}-${code}"
+          if [[ "$GITHUB_REF" == refs/tags/* && "$GITHUB_REF_NAME" != "$tag" ]]; then
+            echo "标签必须为 ${tag}，与 version.properties 一致" >&2
+            exit 1
+          fi
+          echo "name=$version" >> "$GITHUB_OUTPUT"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 21 }
+      - name: Install Android SDK packages
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;37.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Configure release signing
+        env:
+          SIGNING_PROPERTIES: ${{ secrets.SIGNING_PROPERTIES }}
+          SIGN_KEY: ${{ secrets.SIGN_KEY }}
+        run: |
+          if [[ -z "$SIGNING_PROPERTIES" || -z "$SIGN_KEY" ]]; then
+            echo "发布前必须配置 SIGNING_PROPERTIES 和 SIGN_KEY，不能使用 debug 签名" >&2
+            exit 1
+          fi
+          printf '%s' "$SIGNING_PROPERTIES" | base64 --decode > signing.properties
+          printf '%s' "$SIGN_KEY" | base64 --decode > keystore.jks
+      - name: Build release APK
+        run: ./gradlew :app:assembleRelease --max-workers=1 -Porg.gradle.jvmargs=-Xmx3g
+      - name: Verify APK and prepare update assets
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.version.outputs.name }}
+          RELEASE_CODE: ${{ steps.version.outputs.code }}
+        run: |
+          metadata=app/build/outputs/apk/release/output-metadata.json
+          test "$(jq -r '.applicationId' "$metadata")" = "io.neta.music"
+          test "$(jq -r '.elements[0].versionName' "$metadata")" = "$RELEASE_VERSION"
+          test "$(jq -r '.elements[0].versionCode' "$metadata")" = "$RELEASE_CODE"
+          mkdir -p dist
+          apk_name=$(jq -r '.elements[0].outputFile' "$metadata")
+          cp "app/build/outputs/apk/release/$apk_name" dist/
+          apk="dist/$apk_name"
+          "$ANDROID_HOME/build-tools/37.0.0/zipalign" -c -P 16 4 "$apk"
+          "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --verbose "$apk"
+          sha=$(sha256sum "$apk" | awk '{print $1}')
+          size=$(stat -c%s "$apk")
+          published=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          note=$(git log -1 --pretty=%s)
+          min_sdk=$(sed -n 's/^minSdk = "\([0-9]*\)"/\1/p' gradle/libs.versions.toml)
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/${apk_name}"
+          jq -n \
+            --arg schema "neta.music.update" \
+            --argjson versionCode "$RELEASE_CODE" \
+            --arg versionName "$RELEASE_VERSION" \
+            --arg tag "$RELEASE_TAG" \
+            --arg publishedAt "$published" \
+            --arg url "$url" \
+            --argjson minSdk "$min_sdk" \
+            --argjson size "$size" \
+            --arg sha "$sha" \
+            --arg note "$note" \
+            '{schema:$schema,channel:"stable",versionCode:$versionCode,versionName:$versionName,tag:$tag,publishedAt:$publishedAt,minSdk:$minSdk,apk:{url:$url,size:$size,sha256:$sha},notes:[$note]}' > dist/update.json
+          echo "$sha  $apk_name" > dist/update.apk.sha256
+          git archive --format=zip --prefix="neta-car-music-${RELEASE_VERSION}/" \
+            --output="dist/neta-car-music-${RELEASE_VERSION}-${RELEASE_CODE}-source.zip" "$GITHUB_SHA"
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: 吒友爱听 ${{ steps.version.outputs.name }} (${{ steps.version.outputs.code }})
+          body: |
+            吒友爱听，面向哪吒车机 Android 11。更新包校验 SHA-256、包名、版本和签名。
+            本软件按 AGPL-3.0 分发，对应源码见下方 source.zip 和本标签的 Source code。
+            上游项目：https://github.com/mytv-android/myMusic
+          files: |
+            dist/*.apk
+            dist/update.json
+            dist/update.apk.sha256
+            dist/*-source.zip
+          fail_on_unmatched_files: true
+          prerelease: false
+          make_latest: 'true'

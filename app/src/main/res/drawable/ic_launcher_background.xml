@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 图标外层使用朱红底，适配桌面遮罩及前景位移。 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <gradient
+        android:angle="315"
+        android:startColor="#FFC82F1C"
+        android:centerColor="#FFA41416"
+        android:endColor="#FF780C15"
+        android:type="linear" />
+</shape>

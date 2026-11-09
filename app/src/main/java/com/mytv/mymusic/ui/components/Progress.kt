@@ -1,0 +1,313 @@
+package com.mytv.mymusic.ui.components
+
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ContainedLoadingIndicator
+import androidx.compose.material3.LinearWavyProgressIndicator
+import androidx.compose.material3.WavyProgressIndicatorDefaults
+import androidx.compose.material3.LoadingIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.State
+import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.setProgress
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import com.mytv.mymusic.ui.formatTime
+import com.mytv.mymusic.ui.theme.LocalAppearance
+
+/**
+ * 波浪进度条：播放时有波浪，暂停或减少动画时拉平。可拖动、可点按跳转；电视上左右键快退快进 10 秒。
+ * 进度只在动画/绘制 lambda 中读取；时间文字按秒降频，无障碍语义按 10 秒播报。
+ * [amplitudeScale] 是波幅倍数（0..1），只在指示器的绘制阶段读。指示器把波幅变化做成 500ms 补间、补间途中不接新值，
+ * 所以这里只适合给变化比 500ms 慢的值（播放页给的是低频慢包络）；逐帧变化的值只会被随机抽样。
+ * [waveBpm] 大于 0 时波浪每拍走一个波长（播放页锁上拍子时给），否则每秒一个波长；在这里的组合阶段读，变了只重组进度条。
+ * [waveTravel] 为 false 时波浪停在原地不平移（海报墙的大卡）：平移是指示器自己按屏幕刷新率跑的动画，停下来后只在进度变化时重画。
+ */
+@Composable
+fun WavySeekBar(
+    position: State<Long>,
+    duration: Long,
+    playing: Boolean,
+    onSeek: (Long) -> Unit,
+    modifier: Modifier = Modifier,
+    color: Color = MaterialTheme.colorScheme.primary,
+    trackColor: Color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.22f),
+    showTimes: Boolean = true,
+    amplitudeScale: () -> Float = { 1f },
+    waveBpm: () -> Float = { 0f },
+    waveTravel: Boolean = true,
+    live: Boolean = false,
+) {
+    val reduceMotion = LocalAppearance.current.reduceMotion
+    var dragging by remember { mutableStateOf(false) }
+    var dragFraction by remember { mutableFloatStateOf(0f) }
+    val seek by rememberUpdatedState(onSeek)
+    // 只按 10 秒桶让语义/描述重组；拖动时也同样量化，避免每个 move 触发组合
+    val spokenPosition by remember(position, duration) {
+        derivedStateOf {
+            val ms = if (dragging) (dragFraction * duration).toLong() else position.value
+            spokenPositionBucket(ms)
+        }
+    }
+    val spokenFraction = if (duration > 0) (spokenPosition.toFloat() / duration).coerceIn(0f, 1f) else 0f
+    Column(modifier) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(32.dp)
+                .semantics {
+                    if (live) {
+                        // 直播没有进度可报，读屏只说明这是直播
+                        contentDescription = "直播"
+                        stateDescription = "正在直播"
+                    } else {
+                        contentDescription = "播放进度"
+                        stateDescription = "已播放 ${spokenTime(spokenPosition)}，共 ${spokenTime(duration)}"
+                        progressBarRangeInfo = ProgressBarRangeInfo(spokenFraction, 0f..1f)
+                        setProgress { target ->
+                            if (duration > 0) seek((target.coerceIn(0f, 1f) * duration).toLong())
+                            true
+                        }
+                    }
+                }
+                .onKeyEvent { event ->
+                    if (live || event.type != KeyEventType.KeyDown || duration <= 0) return@onKeyEvent false
+                    when (event.key) {
+                        Key.DirectionLeft -> { seek((position.value - 10_000).coerceAtLeast(0)); true }
+                        Key.DirectionRight -> { seek((position.value + 10_000).coerceAtMost(duration)); true }
+                        else -> false
+                    }
+                }
+                // 不可聚焦的话遥控器既走不到进度条，左右键快进快退也收不到
+                .focusable()
+                .pointerInput(duration) {
+                    // 宽度每次现取：旋转、分屏改变尺寸时不会重启这个协程
+                    detectTapGestures { offset ->
+                        if (!live && duration > 0) seek(((offset.x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f) * duration).toLong())
+                    }
+                }
+                .pointerInput(duration) {
+                    detectHorizontalDragGestures(
+                        onDragStart = { offset ->
+                            dragging = true
+                            dragFraction = (offset.x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f)
+                        },
+                        onDragEnd = {
+                            if (!live && duration > 0) seek((dragFraction * duration).toLong())
+                            dragging = false
+                        },
+                        onDragCancel = { dragging = false },
+                    ) { change, _ ->
+                        dragFraction = (change.position.x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f)
+                    }
+                },
+            contentAlignment = Alignment.Center,
+        ) {
+            LinearWavyProgressIndicator(
+                progress = {
+                    when {
+                        live -> 0f
+                        dragging -> dragFraction
+                        duration > 0 -> (position.value.toFloat() / duration).coerceIn(0f, 1f)
+                        else -> 0f
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                color = color,
+                trackColor = trackColor,
+                // 这个值的变化按 500ms 补间过去，见上面 amplitudeScale 的说明
+                amplitude = { if (playing && !dragging && !reduceMotion) amplitudeScale().coerceIn(0f, 1f) else 0f },
+                wavelength = WavyProgressIndicatorDefaults.LinearDeterminateWavelength,
+                waveSpeed = if (waveTravel) WavyProgressIndicatorDefaults.LinearDeterminateWavelength * waveSpeedFactor(waveBpm()) else 0.dp,
+            )
+        }
+        if (showTimes) {
+            if (live) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("● 直播中", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                    Text("LIVE", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            } else {
+                ProgressTimes(
+                    position = position,
+                    duration = duration,
+                    dragging = { dragging },
+                    dragFraction = { dragFraction },
+                )
+            }
+        }
+    }
+}
+
+/** 时间文字独立按秒重组；播放进度和拖动值都不在 WavySeekBar 的组合阶段读取。 */
+@Composable
+private fun ProgressTimes(
+    position: State<Long>,
+    duration: Long,
+    dragging: () -> Boolean,
+    dragFraction: () -> Float,
+) {
+    val seconds by remember(position, duration, dragging, dragFraction) {
+        derivedStateOf {
+            val ms = if (dragging()) (dragFraction() * duration).toLong() else position.value
+            ms / 1_000L
+        }
+    }
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text(formatTime(seconds * 1_000L), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(formatTime(duration), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+/** 波速是波长的几倍：每拍一个波长；没有拍子时每秒一个。 */
+internal fun waveSpeedFactor(bpm: Float): Float = if (bpm > 0f) bpm / 60f else 1f
+
+/** 读屏播报按 10 秒取整，避免每 500ms 的进度更新一直打断朗读。 */
+internal fun spokenPositionBucket(positionMs: Long): Long = positionMs / 10_000L * 10_000L
+
+/** “3 分 05 秒”这类读法；“03:05”会被读成时刻。 */
+private fun spokenTime(ms: Long): String {
+    val seconds = (ms / 1000).coerceAtLeast(0)
+    return if (seconds >= 60) "${seconds / 60} 分 ${seconds % 60} 秒" else "$seconds 秒"
+}
+
+/** 200ms–5s 的等待用形变 LoadingIndicator；更短不显示，更长换成骨架屏 + 文案。 */
+@Composable
+fun AppLoading(modifier: Modifier = Modifier, text: String? = null, contained: Boolean = false) {
+    Column(
+        modifier.fillMaxWidth().padding(vertical = 28.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        if (contained) ContainedLoadingIndicator(Modifier.size(64.dp)) else LoadingIndicator(Modifier.size(56.dp))
+        if (text != null) {
+            Text(text, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+/** SkeletonRows 共享一条流光；不在组里的 Skeleton 仍各自播放，保持旧调用兼容。 */
+private val LocalSkeletonShimmer = compositionLocalOf<State<Float>?> { null }
+
+/** 骨架块：低对比度的流光。减少动画时静止。 */
+@Composable
+fun Skeleton(modifier: Modifier = Modifier, shape: Shape = RoundedCornerShape(8.dp)) {
+    val reduceMotion = LocalAppearance.current.reduceMotion
+    val base = MaterialTheme.colorScheme.surfaceContainerHigh
+    val shine = MaterialTheme.colorScheme.surfaceContainerHighest
+    val shared = LocalSkeletonShimmer.current
+    // 动画值不在这里读：读在绘制阶段，流光每帧只失效绘制，不触发重组
+    val shimmer = when {
+        reduceMotion -> null
+        shared != null -> shared
+        else -> {
+            val transition = rememberInfiniteTransition(label = "skeleton")
+            transition.animateFloat(0f, 1f, infiniteRepeatable(tween(1400), RepeatMode.Restart), label = "shimmer")
+        }
+    }
+    Box(
+        modifier
+            .clip(shape)
+            .drawWithCache {
+                // 渐变只与颜色和波段宽度有关；缓存一次，逐帧只做平移，不重建 Brush
+                val band = (size.width * 0.55f).coerceAtLeast(1f)
+                val brush = Brush.horizontalGradient(
+                    0f to base,
+                    0.5f to shine,
+                    1f to base,
+                    startX = 0f,
+                    endX = band,
+                )
+                onDrawBehind {
+                    drawRect(base)
+                    val progress = shimmer?.value ?: return@onDrawBehind
+                    withTransform({ translate(-band + progress * (size.width + band), 0f) }) {
+                        drawRect(brush, size = Size(band, size.height))
+                    }
+                }
+            },
+    )
+}
+
+/** 歌曲列表的骨架：封面 + 两行文字。整组共享一条流光进度。 */
+@Composable
+fun SkeletonRows(count: Int = 6, modifier: Modifier = Modifier) {
+    val reduceMotion = LocalAppearance.current.reduceMotion
+    val shimmer = if (reduceMotion) {
+        null
+    } else {
+        val transition = rememberInfiniteTransition(label = "skeletonRows")
+        transition.animateFloat(0f, 1f, infiniteRepeatable(tween(1400), RepeatMode.Restart), label = "shimmer")
+    }
+    CompositionLocalProvider(LocalSkeletonShimmer provides shimmer) {
+        Column(modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            repeat(count) { index ->
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(segmentShape(index, count))
+                        .background(MaterialTheme.colorScheme.surfaceContainerLow)
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Skeleton(Modifier.size(48.dp), RoundedCornerShape(12.dp))
+                    Spacer(Modifier.width(14.dp))
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Skeleton(Modifier.fillMaxWidth(0.62f).height(14.dp), CircleShape)
+                        Skeleton(Modifier.fillMaxWidth(0.38f).height(12.dp), CircleShape)
+                    }
+                }
+            }
+        }
+    }
+}

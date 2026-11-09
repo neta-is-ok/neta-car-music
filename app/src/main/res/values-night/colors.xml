@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="app_launch_background">#FF1C1510</color>
+    <color name="widget_loading_surface">#FF2B211A</color>
+    <color name="widget_loading_ink">#FFFFB4A5</color>
+</resources>

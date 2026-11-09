@@ -28,6 +28,10 @@ keystore.properties
 *.apks
 dist/
 
+# Local handoff and design materials
+/docs/
+/artwork/
+
 # OS
 .DS_Store
 Thumbs.db

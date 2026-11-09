@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "com.mytv.mymusic.baselineprofile"
+    namespace = "io.neta.music.baselineprofile"
     compileSdk = libs.versions.compileSdk.get().toInt()
     buildToolsVersion = libs.versions.buildTools.get()
 

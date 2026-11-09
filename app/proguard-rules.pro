@@ -1,3 +1,3 @@
 -keep class go.** { *; }
--keep class com.mytv.mymusic.musicbridge.** { *; }
+-keep class io.neta.music.musicbridge.** { *; }
 -dontwarn go.**

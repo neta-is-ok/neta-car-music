@@ -14,7 +14,7 @@
 - License: GNU Affero General Public License v3.0
 - Location: third_party/music-lib
 
-The vendored Go source is retained as the reference for the Kotlin native port in `app/src/main/java/com/mytv/mymusic/data/native`. This includes the word-timing lyric conversions ported from `lyrics/lyrics.go` (`ParseLRC` / `ParseYRC` / `ParseQRC` / `ParseKRC` / `ConvertVerbatimLRC` → the verbatim-LRC output in `QQProvider.kt`, `KugouProvider.kt`, `NetEaseProvider.kt`). The Kotlin port is a derivative work distributed under AGPL-3.0. Modifications must retain this notice and the AGPL-3.0 terms.
+The vendored Go source is retained as the reference for the Kotlin native port in `app/src/main/java/io/neta/music/data/native`. This includes the word-timing lyric conversions ported from `lyrics/lyrics.go` (`ParseLRC` / `ParseYRC` / `ParseQRC` / `ParseKRC` / `ConvertVerbatimLRC` → the verbatim-LRC output in `QQProvider.kt`, `KugouProvider.kt`, `NetEaseProvider.kt`). The Kotlin port is a derivative work distributed under AGPL-3.0. Modifications must retain this notice and the AGPL-3.0 terms.
 
 ## SodaM / libresoda
 
@@ -125,12 +125,12 @@ SOFTWARE.
 - Upstream: https://github.com/chthollyphile/folia-major
 - Revision checked: f96c65b27f7ca351e8db781301cedfa0a52252e2 (upstream HEAD on 2026-10-29)
 - License: GNU Affero General Public License v3.0
-- Location: `app/src/main/java/com/mytv/mymusic/ui/poster` (the `Wall*.kt` layout core and the poster UI built on it)
+- Location: `app/src/main/java/io/neta/music/ui/poster` (the `Wall*.kt` layout core and the poster UI built on it)
 - Usage: the queue / collection poster wall adapts the layout mechanism of folia-major's Lattice view: 12×8-unit blocks holding 12 poster slots; four hand-drawn block templates × four mirrors, with the template chosen by a linear step over the block coordinates and the mirror by a coordinate hash; infinite tiling of a repeat cell of ceil(N/12) blocks; growing a tapped poster in place to 6×6 and reflowing only its own block with the minimum-movement exact cover; following the current track with the camera to the nearest copy; and D-pad navigation scored as gap + 2·miss + pitch. myMusic redrew the four templates, precomputes the 192 reflows offline (`WallReflowTable.kt`) and replaces the visual layer with Material 3 Expressive components. The code is a Kotlin rewrite, not a copy of the upstream TypeScript, and no upstream assets are bundled. It is a derivative work distributed under AGPL-3.0; modifications must retain this notice and the AGPL-3.0 terms.
 
 ## Folia mods (full-screen lyric animations)
 
-Location: `app/src/main/java/com/mytv/mymusic/ui/player/stage` (`modes/` holds one file per ported animation). Each mod was read from the package in the Folium mod catalog and rewritten as native Kotlin / Jetpack Compose drawing code: no upstream JavaScript, WebView, script engine or dynamic code loading is involved, and no upstream images, fonts or other assets are bundled. Visual parameters that were not exposed in the app keep the upstream defaults. Random motion is seeded per song instead of `Math.random`, and every port draws a static frame when "reduce motion" is on.
+Location: `app/src/main/java/io/neta/music/ui/player/stage` (`modes/` holds one file per ported animation). Each mod was read from the package in the Folium mod catalog and rewritten as native Kotlin / Jetpack Compose drawing code: no upstream JavaScript, WebView, script engine or dynamic code loading is involved, and no upstream images, fonts or other assets are bundled. Visual parameters that were not exposed in the app keep the upstream defaults. Random motion is seeded per song instead of `Math.random`, and every port draws a static frame when "reduce motion" is on.
 
 ### folia-major official sample mods (AGPL-3.0)
 
@@ -197,13 +197,6 @@ These features were written from the mods' public descriptions only; none of the
 - License: MIT License
 - Usage: dynamic color schemes generated from the album cover (`ui/theme`).
 
-## Haze
-
-- Upstream: https://github.com/chrisbanes/haze
-- Version: 2.0.1
-- License: Apache License 2.0
-- Usage: blur behind the mini player, navigation bar and bottom player bar.
-
 ## Music platform brand marks
 
 The platform icons in `app/src/main/res/drawable/ic_provider_*.xml` are **monochrome vector adaptations of the platforms' real brand marks**. Their outlines are traced from the official application artwork previously sourced through Apple's public App Store Search API, with Jamendo's mark taken from the official Jamendo website icon (all retrieved 2026-11-05). The geometry is normalized to a shared 24 × 24 canvas, but the characteristic shapes, negative spaces and proportions are preserved rather than redesigned. QQ Music uses only its actual green-note silhouette (not the yellow app-icon backdrop), and Bilibili uses only the `bilibili` wordmark (not the temporary event caption).
@@ -256,7 +249,7 @@ OF THE POSSIBILITY OF SUCH DAMAGE.
 
 - Upstream: https://github.com/nayuki/QR-Code-generator
 - License: MIT License
-- Location: `app/src/main/java/com/mytv/mymusic/ui/settings/QrCode.kt` (`QrEncoder`, `QrCodeImage`)
+- Location: `app/src/main/java/io/neta/music/ui/settings/QrCode.kt` (`QrEncoder`, `QrCodeImage`)
 - Usage: reference implementation for the local QR encoder (byte mode, error-correction level M, versions 1–40, Reed–Solomon ECC, mask selection). The Kotlin port is a derivative work distributed under AGPL-3.0. It renders login QR codes and the temporary TV sync-setup address, so no QR image has to be fetched from a third-party service.
 
 ## Roboto Flex

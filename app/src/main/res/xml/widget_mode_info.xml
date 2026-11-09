@@ -16,5 +16,5 @@
     android:resizeMode="horizontal|vertical"
     android:updatePeriodMillis="0"
     android:widgetCategory="home_screen"
-    android:configure="com.mytv.mymusic.widget.WidgetConfigActivity"
+    android:configure="io.neta.music.widget.WidgetConfigActivity"
     android:widgetFeatures="reconfigurable|configuration_optional" />

@@ -8,17 +8,6 @@
 - 运行目标：Android 11（API 30）
 - 技术栈：Kotlin、Jetpack Compose / Material 3、Media3
 
-应用使用哪吒听歌图标，默认采用朱红、暖金与米白色调，并提供对应深色主题。图标母版与资源导出方式见 [artwork/README.md](artwork/README.md)。
-
-## 主要功能
-
-- 聚合音乐平台的榜单、歌单与搜索结果，按可用音源播放和换源。
-- 播放队列、歌词、收藏、自建歌单、下载及离线缓存。
-- 后台播放和系统媒体控制，支持均衡器与定时关闭。
-- 可选 GitHub Gist / Gitee 音乐库同步；账号 Cookie 与同步令牌应自行妥善保管。
-
-平板与车机主界面固定使用底部播放条，不按宽度切换为右侧常驻播放窗格；仍可打开完整播放页。头枕出声、多屏和音乐区悬浮窗长期不纳入开发范围。
-
 ## 构建
 
 配置 `JAVA_HOME`、`ANDROID_HOME` 后运行：
@@ -29,13 +18,13 @@
 
 APK 输出到 `app/build/outputs/apk/debug/neta-car-music-0.0.1-1.apk`。SDK 与依赖版本以 `gradle/libs.versions.toml` 为准。
 
-开发约定见 [AGENTS.md](AGENTS.md)，签名和发布操作见 [docs/releasing.md](docs/releasing.md)。
+Release 构建使用 `./gradlew :app:assembleRelease`，签名通过本地忽略的 `signing.properties` 或环境变量配置；密钥和密码不入库。开发约定见 [AGENTS.md](AGENTS.md)。
 
 ## 发布与更新
 
 - 仓库：<https://github.com/neta-is-ok/neta-car-music>
 - Release：<https://github.com/neta-is-ok/neta-car-music/releases>
-- 普通分支推送及 PR 只编译 Debug；版本标签（如 `v0.0.1-1`）或手动运行发布工作流才创建 Release。
+- 普通分支推送及 PR 只编译 Debug；版本标签（如 `v0.0.1-1`）或手动运行[发布工作流](.github/workflows/build.yml)才创建 Release。
 - 正式发布使用固定专用签名，提供 APK、更新清单、SHA-256 文件和同一版本源码包，不回退到 debug 签名。
 - 应用只检查本项目的更新，清单与 APK 使用 [CDN 配置](app/src/main/assets/cdn-providers.json) 中的镜像；配置初始来自 Netamade，工程独立构建。
 

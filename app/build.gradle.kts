@@ -36,7 +36,7 @@ require(releaseRepository.isEmpty() || releaseRepository.matches(Regex("[A-Za-z0
 }
 
 android {
-    namespace = "com.mytv.mymusic"
+    namespace = "io.neta.music"
     compileSdk = libs.versions.compileSdk.get().toInt()
     // 与 compileSdk / targetSdk 对齐，本地和 CI（.github/workflows/build.yml）用同一套
     buildToolsVersion = libs.versions.buildTools.get()
@@ -130,9 +130,6 @@ dependencies {
     implementation(libs.androidx.compose.material.icons)
     implementation(libs.material.kolor)
     implementation(libs.material.kolor.palette)
-    implementation(libs.haze)
-    implementation(libs.haze.blur)
-    implementation(libs.haze.blur.materials)
     implementation(libs.androidx.media3.common)
     implementation(libs.androidx.media3.exoplayer)
     implementation(libs.androidx.media3.exoplayer.hls)

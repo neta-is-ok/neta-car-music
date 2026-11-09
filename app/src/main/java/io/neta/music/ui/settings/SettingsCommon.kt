@@ -1,0 +1,268 @@
+package io.neta.music.ui.settings
+
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.filled.Analytics
+import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.PlayCircle
+import androidx.compose.material.icons.filled.PrivacyTip
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import io.neta.music.R
+import io.neta.music.ui.components.IconTone
+import io.neta.music.ui.components.LocalAppSnackbar
+import io.neta.music.ui.components.LocalAppWindow
+import io.neta.music.ui.components.LocalOverlayPadding
+import io.neta.music.ui.components.PageScaffold
+import io.neta.music.ui.components.ProviderIcon
+import io.neta.music.ui.components.SegmentGap
+import io.neta.music.ui.components.segmentShape
+import io.neta.music.ui.components.tvFocusRing
+import kotlinx.coroutines.launch
+
+/** 设置分区。“开源许可 / 隐私说明”挂在“关于与更新”下面，双栏时左栏仍高亮“关于与更新”。 */
+internal enum class SettingsSection(
+    val route: String,
+    val title: String,
+    val subtitle: String,
+    val icon: ImageVector,
+    val tone: IconTone,
+) {
+    Appearance("settings/appearance", "外观", "文字、侧边栏、歌词字号、主题与配色", Icons.Filled.Palette, IconTone.Primary),
+    // 原来叫“歌词”；枚举名和路由保持不变，旧的深链接和保存的选中项继续有效
+    Lyrics("settings/lyrics", "播放页", "封面形状、歌词背景与动画、律动与跟拍校准", Icons.Filled.PlayCircle, IconTone.Primary),
+    Playback("settings/playback", "播放与换源", "切歌过渡、换源模式与平台顺序", Icons.Filled.SwapHoriz, IconTone.Primary),
+    Report("settings/report", "播放上报", "把播放记录回传给平台，推荐跟着口味走", Icons.Filled.Analytics, IconTone.Primary),
+    Equalizer("settings/equalizer", "均衡器", "本机播放音效，不影响下载文件", Icons.Filled.GraphicEq, IconTone.Primary),
+    Sources("settings/sources", "音乐源", "启用哪些平台、按什么顺序", Icons.Filled.Tune, IconTone.Primary),
+    Search("settings/search", "搜索与浏览", "默认浏览来源", Icons.Filled.Search, IconTone.Primary),
+    Accounts("settings/accounts", "平台账号", "扫码登录、Cookie 与退出", Icons.Filled.Person, IconTone.Secondary),
+    Sync("settings/sync", "音乐库同步", "自建歌单的云端同步", Icons.Filled.Cloud, IconTone.Secondary),
+    Storage("settings/storage", "存储", "缓存、下载与占用", Icons.Filled.Storage, IconTone.Tertiary),
+    About("settings/about", "关于与更新", "版本、更新、许可与隐私", Icons.Filled.Info, IconTone.Tertiary),
+    Licenses("settings/licenses", "开源许可", "应用、上游库与第三方依赖", Icons.Filled.Code, IconTone.Tertiary),
+    Privacy("settings/privacy", "隐私说明", "哪些数据留在本机，哪些会离开", Icons.Filled.PrivacyTip, IconTone.Tertiary),
+    ;
+
+    val parent: SettingsSection? get() = if (this == Licenses || this == Privacy) About else null
+
+    companion object {
+        /** 设置首页 / 双栏左栏的三组。 */
+        val groups = listOf(
+            listOf(Appearance, Lyrics, Playback, Report, Equalizer, Sources, Search),
+            listOf(Accounts, Sync),
+            listOf(Storage, About),
+        )
+    }
+}
+
+/**
+ * 设置子页骨架。手机和 <840dp 平板是独立页面（Large app bar + 返回）；
+ * 双栏时作为右栏内容，标题由双栏外壳画，这里只排列表，左右留白也由外壳给。
+ */
+@Composable
+internal fun SettingsPage(
+    section: SettingsSection,
+    embedded: Boolean,
+    onBack: () -> Unit,
+    subtitle: String = section.subtitle,
+    content: LazyListScope.() -> Unit,
+) {
+    if (embedded) {
+        LazyColumn(
+            Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(bottom = LocalOverlayPadding.current.calculateBottomPadding() + 32.dp),
+            verticalArrangement = Arrangement.spacedBy(SegmentGap),
+            content = content,
+        )
+        return
+    }
+    val gutter = LocalAppWindow.current.gutter
+    PageScaffold(title = section.title, subtitle = subtitle, onBack = onBack) { padding ->
+        LazyColumn(
+            Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+                start = gutter,
+                end = gutter,
+                top = padding.calculateTopPadding(),
+                bottom = padding.calculateBottomPadding(),
+            ),
+            verticalArrangement = Arrangement.spacedBy(SegmentGap),
+            content = content,
+        )
+    }
+}
+
+/** 列表下方的说明文字：不是卡片，左缩进与卡片内文字对齐。 */
+@Composable
+internal fun SettingsNote(text: String, modifier: Modifier = Modifier) {
+    Text(
+        text,
+        modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, top = 8.dp, bottom = 4.dp),
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+/** 平台头像：有平台图标就用图标，认不出才退回圆形底 + 简称。已登录 / 已启用时用 primary 描边标出。 */
+@Composable
+internal fun ProviderMark(name: String, size: Dp = 40.dp, active: Boolean = false, id: String? = null) {
+    ProviderIcon(id = id, name = name, size = size, active = active)
+}
+
+/**
+ * 纯文字的分段卡片（许可、隐私说明）。电视上可以获得焦点，
+ * 否则整页没有可聚焦元素，遥控器无法滚动。
+ */
+@Composable
+internal fun TextCard(
+    title: String,
+    body: String,
+    index: Int,
+    count: Int,
+    modifier: Modifier = Modifier,
+    titleColor: Color = MaterialTheme.colorScheme.onSurface,
+    footer: @Composable (() -> Unit)? = null,
+) {
+    val shape = segmentShape(index, count)
+    val tv = LocalAppWindow.current.isTv
+    Column(
+        modifier
+            .fillMaxWidth()
+            .heightIn(min = 64.dp)
+            .tvFocusRing(shape, scale = 1.02f)
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.surfaceContainerLow)
+            .then(if (tv && footer == null) Modifier.focusable() else Modifier)
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = titleColor)
+        Text(body, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        footer?.invoke()
+    }
+}
+
+/** 打开外部链接。电视上常常没有浏览器，打不开时用 Snackbar 说明，而不是崩溃。 */
+@Composable
+internal fun rememberOpenUri(): (String) -> Unit {
+    val handler = LocalUriHandler.current
+    val snackbar = LocalAppSnackbar.current
+    val scope = rememberCoroutineScope()
+    return remember(handler, snackbar, scope) {
+        { uri ->
+            runCatching { handler.openUri(uri) }.onFailure {
+                scope.launch { snackbar.showSnackbar("这台设备没有可以打开链接的应用") }
+            }
+        }
+    }
+}
+
+/** 电视默认焦点：等一帧让列表排好版再请求，目标还没挂上时静默忽略。 */
+@Composable
+internal fun SettingsTvFocus(requester: FocusRequester, key: Any? = Unit) {
+    if (!LocalAppWindow.current.isTv) return
+    LaunchedEffect(key) {
+        withFrameNanos { }
+        runCatching { requester.requestFocus() }
+    }
+}
+
+/** SodaM：签名服务协议、公共签名服务与官方图标的来源。 */
+internal const val SODAM_URL = "https://github.com/sodahub-org/sodam"
+
+/**
+ * SodaM 官方图标（`crates/sodam/assets/brand/sodam-logo.svg`）。
+ * 图标本身自带深青圆角底，只做圆角裁剪，不再套底色。
+ */
+@Composable
+internal fun SodamLogo(size: Dp, modifier: Modifier = Modifier) {
+    Image(
+        painter = painterResource(R.drawable.ic_sodam_logo),
+        contentDescription = "SodaM",
+        modifier = modifier.size(size).clip(RoundedCornerShape(size * 0.26f)),
+    )
+}
+
+/**
+ * “Powered by SodaM”署名条：图标 + 一句说明，点一下打开 SodaM 仓库。
+ * 公共签名服务会把带 Cookie 的请求头发给对方，署名要让用户知道流量去了哪里。
+ */
+@Composable
+internal fun SodamCredit(modifier: Modifier = Modifier, logoSize: Dp = 44.dp, note: String? = null) {
+    val openUri = rememberOpenUri()
+    val shape = RoundedCornerShape(20.dp)
+    Row(
+        modifier
+            .fillMaxWidth()
+            .tvFocusRing(shape, scale = 1.02f)
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+            .clickable { openUri(SODAM_URL) }
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        SodamLogo(logoSize)
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text("Powered by SodaM", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Text(
+                note ?: "汽水会员整曲的签名服务与协议来自 SodaM（AGPL-3.0）",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Spacer(Modifier.width(8.dp))
+        Icon(
+            Icons.AutoMirrored.Filled.OpenInNew,
+            null,
+            Modifier.size(18.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}

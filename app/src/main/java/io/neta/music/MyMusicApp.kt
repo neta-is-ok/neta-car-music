@@ -32,6 +32,8 @@ import io.neta.music.playback.QueueStore
 import io.neta.music.playback.RhythmAnalyzer
 import io.neta.music.playback.ScreensaverState
 import io.neta.music.playback.SleepTimer
+import io.neta.music.playback.NetaMediaController
+import io.neta.music.ui.theme.SystemTheme
 import io.neta.music.ui.MusicViewModel
 import io.neta.music.widget.WidgetUpdater
 import kotlinx.coroutines.CoroutineScope
@@ -67,7 +69,10 @@ class MyMusicApp : Application(), ViewModelStoreOwner, Configuration.Provider {
     lateinit var accountProfiles: AccountProfileStore
 
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    val sleepTimer by lazy { SleepTimer(appScope) }
+    /** 仅在播放服务存活时设置；静音恢复状态由该服务拥有。 */
+    internal var carMedia: NetaMediaController? = null
+    val sleepTimer by lazy { SleepTimer(appScope) { carMedia?.cancelResume() } }
+    val systemTheme by lazy { SystemTheme(this) }
 
     override val viewModelStore = ViewModelStore()
 
@@ -94,6 +99,7 @@ class MyMusicApp : Application(), ViewModelStoreOwner, Configuration.Provider {
 
     override fun onCreate() {
         super.onCreate()
+        systemTheme.start()
         AppleTokenCache.attach(this)
         val backgroundWork = BackgroundWork.available(this)
         if (!backgroundWork) {
@@ -103,7 +109,7 @@ class MyMusicApp : Application(), ViewModelStoreOwner, Configuration.Provider {
             override fun onActivityResumed(activity: android.app.Activity) = ForegroundActivity.set(activity)
             override fun onActivityPaused(activity: android.app.Activity) = ForegroundActivity.clear(activity)
             override fun onActivityCreated(activity: android.app.Activity, savedInstanceState: android.os.Bundle?) {}
-            override fun onActivityStarted(activity: android.app.Activity) {}
+            override fun onActivityStarted(activity: android.app.Activity) = systemTheme.refresh()
             override fun onActivityStopped(activity: android.app.Activity) {}
             override fun onActivitySaveInstanceState(activity: android.app.Activity, outState: android.os.Bundle) {}
             override fun onActivityDestroyed(activity: android.app.Activity) {}

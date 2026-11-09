@@ -11,7 +11,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
@@ -36,6 +35,7 @@ import io.neta.music.ui.components.LocalDarkBarsRequests
 import io.neta.music.ui.theme.LayoutMode
 import io.neta.music.ui.theme.MyMusicTheme
 import io.neta.music.ui.theme.isTelevision
+import io.neta.music.ui.theme.isAppSystemInDarkTheme
 
 class MainActivity : ComponentActivity() {
     private val model get() = (application as io.neta.music.MyMusicApp).musicViewModel
@@ -86,9 +86,10 @@ class MainActivity : ComponentActivity() {
                 else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             }
             val darkBars = remember { mutableIntStateOf(0) }
+            val systemDark = isAppSystemInDarkTheme()
             val dark = tvDevice ||
                 state.appearance.layout == LayoutMode.Tv ||
-                state.appearance.isDark(isSystemInDarkTheme()) ||
+                state.appearance.isDark(systemDark) ||
                 ((state.playerOpen || state.posterOpen) && state.current != null) ||
                 darkBars.intValue > 0
             SideEffect(dark) {

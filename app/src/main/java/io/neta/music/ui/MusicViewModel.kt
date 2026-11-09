@@ -859,6 +859,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun quickListen() {
         val current = _playlists.value
         if (!current.canListen) return
+        app.carMedia?.cancelResume()
         val providerId = current.providerId.ifBlank { settingsState.value.provider }
         _playlists.update { it.copy(quickListenStarting = true) }
         directPlayJob?.cancel()
@@ -919,6 +920,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         cookie: String,
         openPlayer: Boolean = true,
     ): String? {
+        app.carMedia?.cancelResume()
         val songs = runCatching { app.repository.listeningModeSongs(providerId, cookie, mode) }.getOrElse {
             if (it is CancellationException) throw it
             return it.message ?: "听歌模式读取失败"
@@ -1334,6 +1336,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     /** 不进详情页直接播放整个榜单（轮播、电视 Hero 上的播放键）。 */
     fun playChart(chart: TopList) {
+        app.carMedia?.cancelResume()
         val source = chart.source.ifBlank { _charts.value.providerId.ifBlank { settingsState.value.provider } }
         directPlayJob?.cancel()
         directPlayJob = viewModelScope.launch {
@@ -1349,6 +1352,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     /** 不进详情页直接播放歌单或专辑。 */
     fun playPlaylist(playlist: Playlist, album: Boolean = false) {
+        app.carMedia?.cancelResume()
         val source = playlist.source.ifBlank { settingsState.value.provider }
         directPlayJob?.cancel()
         directPlayJob = viewModelScope.launch {
@@ -2397,6 +2401,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         pinnedProvider: String?,
         openPlayer: Boolean,
     ): Boolean {
+        // 先取消旧的静音恢复，再异步解析新歌曲；解除静音不能在解析期间恢复旧内容。
+        app.carMedia?.cancelResume()
         val player = awaitController()
         if (player == null) {
             base.value = base.value.copy(error = "播放器尚未就绪")
@@ -4803,6 +4809,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private fun resumeIfInterrupted() {
         if (!interruptedBySystem) return
         interruptedBySystem = false
+        // 静音暂停由播放服务恢复；返回前台不能绕过静音，或重复触发一次播放。
+        if (app.carMedia?.let { it.isMuted == true || it.isPausedForMute } == true) return
         if (!isTvLayout()) return
         val player = controller?.takeIf { it.mediaItemCount > 0 && !it.isPlaying } ?: return
         player.play()

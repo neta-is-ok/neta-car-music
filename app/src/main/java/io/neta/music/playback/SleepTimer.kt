@@ -27,7 +27,7 @@ data class SleepTimerState(
  * 结束前 30 秒线性降低音量，到点暂停并恢复音量。
  */
 @androidx.annotation.OptIn(UnstableApi::class)
-class SleepTimer(private val scope: CoroutineScope) {
+class SleepTimer(private val scope: CoroutineScope, private val beforePause: () -> Unit = {}) {
     private val _state = MutableStateFlow(SleepTimerState())
     val state: StateFlow<SleepTimerState> = _state.asStateFlow()
     private var player: ExoPlayer? = null
@@ -65,6 +65,7 @@ class SleepTimer(private val scope: CoroutineScope) {
                 if (fade && left <= FADE_MS) player?.volume = (left.toFloat() / FADE_MS).coerceIn(0f, 1f)
                 delay(if (left <= FADE_MS) 200L else 1000L)
             }
+            beforePause()
             player?.pause()
             player?.volume = 1f
             _state.value = SleepTimerState()

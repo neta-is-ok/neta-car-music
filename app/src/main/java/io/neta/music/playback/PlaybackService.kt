@@ -36,6 +36,7 @@ import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaButtonReceiver
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
+import androidx.media3.session.SessionResult
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.SettableFuture
@@ -52,6 +53,7 @@ class PlaybackService : MediaSessionService() {
     private var equalizer: EqualizerController? = null
     private var player: ExoPlayer? = null
     private var crossfade: CrossfadeController? = null
+    private var carMedia: NetaMediaController? = null
     /** 两路播放器各自的过渡效果参数（低通 / 高通 / 回声），和音频线程共享。 */
     private val crossfadeParams = arrayOf(CrossfadeParams(), CrossfadeParams())
     private lateinit var mediaSourceFactory: MediaSource.Factory
@@ -164,6 +166,10 @@ class PlaybackService : MediaSessionService() {
             .setCallback(ResumptionCallback())
             .setSessionActivity(openPlayer)
             .build()
+        carMedia = NetaMediaController(this, handler).also {
+            app?.carMedia = it
+            it.start(primary)
+        }
     }
 
     /**
@@ -221,6 +227,7 @@ class PlaybackService : MediaSessionService() {
         player = next
         next.setAudioAttributes(MEDIA_ATTRIBUTES, true)
         session?.setPlayer(next)
+        carMedia?.attach(next)
         (application as? MyMusicApp)?.rhythmAnalyzer?.useSource(slot)
         equalizer?.let { controller -> attachEqualizer(next, controller) }
         (application as? MyMusicApp)?.sleepTimer?.attach(next)
@@ -289,6 +296,9 @@ class PlaybackService : MediaSessionService() {
 
     override fun onDestroy() {
         handler.removeCallbacks(foregroundGuard)
+        carMedia?.stop()
+        (application as? MyMusicApp)?.carMedia = null
+        carMedia = null
         crossfade?.release()
         crossfade = null
         (application as? MyMusicApp)?.sleepTimer?.detach()
@@ -304,6 +314,32 @@ class PlaybackService : MediaSessionService() {
 
     /** 播放器是空的时候（进程刚起来）收到播放：从 ViewModel 取回上次的队列，当前这首解析好地址再交给 Media3 开播。 */
     private inner class ResumptionCallback : MediaSession.Callback {
+        @Suppress("DEPRECATION")
+        override fun onPlayerCommandRequest(
+            session: MediaSession,
+            controller: MediaSession.ControllerInfo,
+            playerCommand: Int,
+        ): Int {
+            // 命令入口能识别“已暂停时再次按暂停”，状态变化回调不能覆盖这种操作。
+            when (playerCommand) {
+                Player.COMMAND_PLAY_PAUSE, Player.COMMAND_STOP, Player.COMMAND_SEEK_TO_MEDIA_ITEM,
+                Player.COMMAND_SEEK_TO_NEXT, Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM,
+                Player.COMMAND_SEEK_TO_PREVIOUS, Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM -> carMedia?.cancelResume()
+            }
+            return SessionResult.RESULT_SUCCESS
+        }
+
+        override fun onSetMediaItems(
+            mediaSession: MediaSession,
+            controller: MediaSession.ControllerInfo,
+            mediaItems: List<MediaItem>,
+            startIndex: Int,
+            startPositionMs: Long,
+        ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
+            carMedia?.cancelResume()
+            return super.onSetMediaItems(mediaSession, controller, mediaItems, startIndex, startPositionMs)
+        }
+
         override fun onPlaybackResumption(
             mediaSession: MediaSession,
             controller: MediaSession.ControllerInfo,

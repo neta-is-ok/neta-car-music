@@ -10,7 +10,6 @@ import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -68,6 +67,9 @@ import io.neta.music.ui.components.SegmentGap
 import io.neta.music.ui.components.SwitchRow
 import io.neta.music.ui.components.rememberAppWindow
 import io.neta.music.ui.theme.MyMusicTheme
+import io.neta.music.ui.theme.LayoutMode
+import io.neta.music.ui.theme.isAppSystemInDarkTheme
+import io.neta.music.ui.theme.isTelevision
 import kotlinx.coroutines.CancellationException
 
 /**
@@ -95,7 +97,9 @@ class WidgetConfigActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             val state by model.state.collectAsState()
-            val dark = state.appearance.isDark(isSystemInDarkTheme())
+            val systemDark = isAppSystemInDarkTheme()
+            val dark = remember { isTelevision() } || state.appearance.layout == LayoutMode.Tv ||
+                state.appearance.isDark(systemDark)
             LaunchedEffect(dark) {
                 enableEdgeToEdge(
                     statusBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT) { dark },

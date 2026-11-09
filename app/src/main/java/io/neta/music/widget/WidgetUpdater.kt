@@ -3,12 +3,10 @@ package io.neta.music.widget
 import android.app.WallpaperManager
 import android.appwidget.AppWidgetManager
 import android.content.BroadcastReceiver
-import android.content.ComponentCallbacks
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.content.res.Configuration
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -112,6 +110,7 @@ object WidgetUpdater {
         watch(data.now.map { it.playback?.let { p -> Triple(p.feedModeId, p.playing, p.song.key) } }, WidgetKind.Mode)
         watch(data.now.map { it.playback?.song?.key }, WidgetKind.List)
         watch(data.palette, *WidgetKind.entries.toTypedArray())
+        watch(data.night, *WidgetKind.entries.toTypedArray())
         watch(data.settings.map { it?.cookies }, WidgetKind.Mode, WidgetKind.Charts)
         watch(data.providers, WidgetKind.Mode, WidgetKind.Charts)
         // 登录或退出后，之前点出来的“要登录”记号作废
@@ -191,18 +190,6 @@ object WidgetUpdater {
         Handler(Looper.getMainLooper()).post {
             ContextCompat.registerReceiver(app, screen, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
             data.screenOn.value = WidgetData.isInteractive(app)
-            app.registerComponentCallbacks(object : ComponentCallbacks {
-                override fun onConfigurationChanged(newConfig: Configuration) {
-                    val night = newConfig.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
-                    if (night == data.night.value) return
-                    data.night.value = night
-                    // Android 12 起桌面按夜间模式自己挑 day / night 颜色；更早的系统颜色在推送时就定了
-                    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) requestAll()
-                }
-
-                @Deprecated("Deprecated in Java")
-                override fun onLowMemory() = Unit
-            })
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
                 runCatching {
                     WallpaperManager.getInstance(app).addOnColorsChangedListener(

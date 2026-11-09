@@ -10,6 +10,8 @@ import io.neta.music.data.AppSettings
 import io.neta.music.ui.theme.BrandSeed
 import io.neta.music.ui.theme.ColorSource
 import io.neta.music.ui.theme.LayoutMode
+import io.neta.music.ui.theme.SystemTheme
+import io.neta.music.ui.theme.SystemThemeState
 import io.neta.music.ui.theme.appColorScheme
 import io.neta.music.ui.toAppearance
 import io.neta.music.ui.theme.wallpaperSeed
@@ -84,7 +86,12 @@ object WidgetColors {
      * 和 App 的 MyMusicTheme 取同一个种子色、配色风格、对比度和纯黑：封面取色用当前这首的种子
      * （还没取到时用上次的），系统壁纸、品牌色、自选色照设置来。从不用系统动态取色。
      */
-    fun palette(context: Context, settings: AppSettings, coverSeed: Int): WidgetPalette {
+    fun palette(
+        context: Context,
+        settings: AppSettings,
+        coverSeed: Int,
+        systemTheme: SystemThemeState = SystemTheme.read(context),
+    ): WidgetPalette {
         val appearance = settings.toAppearance()
         val seed = when (appearance.colorSource) {
             ColorSource.Cover -> coverSeed.takeIf { it != 0 }?.let(::Color)
@@ -99,6 +106,8 @@ object WidgetColors {
             appearance.layout == LayoutMode.Tv -> WidgetThemeMode.Dark
             appearance.theme == "dark" -> WidgetThemeMode.Dark
             appearance.theme == "light" -> WidgetThemeMode.Light
+            // OEM 深浅色不一定同步到桌面的 uiMode，必须推送实际选定的颜色。
+            systemTheme.fromOem -> if (systemTheme.dark) WidgetThemeMode.Dark else WidgetThemeMode.Light
             else -> WidgetThemeMode.System
         }
         fun scheme(dark: Boolean) = WidgetScheme.of(

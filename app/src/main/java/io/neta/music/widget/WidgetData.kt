@@ -1,7 +1,6 @@
 package io.neta.music.widget
 
 import android.content.Context
-import android.content.res.Configuration
 import android.os.PowerManager
 import io.neta.music.MyMusicApp
 import io.neta.music.data.AppSettings
@@ -101,8 +100,9 @@ class WidgetData private constructor(private val app: MyMusicApp) {
     /** 亮屏。灭屏时进度条和歌词都不推。 */
     val screenOn = MutableStateFlow(isInteractive(app))
 
-    /** 系统深色模式；Android 12 以下颜色在推送时就定了，切换深浅后要按它重推。 */
-    val night = MutableStateFlow(isNight(app))
+    /** 与应用共用的系统深浅色；API 30 小组件需要据此重新推送颜色。 */
+    val night = app.systemTheme.state.map { it.dark }
+        .stateIn(scope, SharingStarted.Eagerly, app.systemTheme.state.value.dark)
 
     /** 换壁纸时加一（配色来源是系统壁纸时重新取色）。 */
     val wallpaperVersion = MutableStateFlow(0)
@@ -122,8 +122,8 @@ class WidgetData private constructor(private val app: MyMusicApp) {
         )
     }.distinctUntilChanged().stateIn(scope, SharingStarted.Eagerly, NowState(null, CoverShapeChoice.Cookie12, false, SleepTimerState()))
 
-    val palette: StateFlow<WidgetPalette?> = combine(settings, playback.map { it?.seed ?: 0 }.distinctUntilChanged(), wallpaperVersion) { settings, seed, _ ->
-        settings?.let { WidgetColors.palette(app, it, seed) }
+    val palette: StateFlow<WidgetPalette?> = combine(settings, playback.map { it?.seed ?: 0 }.distinctUntilChanged(), wallpaperVersion, app.systemTheme.state) { settings, seed, _, theme ->
+        settings?.let { WidgetColors.palette(app, it, seed, theme) }
     }.distinctUntilChanged().flowOn(kotlinx.coroutines.Dispatchers.Default).stateIn(scope, SharingStarted.Eagerly, null)
 
     /** provideGlance 开始组合前等设置和播放状态就绪，免得第一帧闪一下空状态。 */
@@ -169,9 +169,6 @@ class WidgetData private constructor(private val app: MyMusicApp) {
         fun get(context: Context): WidgetData = instance ?: synchronized(this) {
             instance ?: WidgetData(context.applicationContext as MyMusicApp).also { instance = it }
         }
-
-        fun isNight(context: Context): Boolean =
-            context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
 
         fun isInteractive(context: Context): Boolean =
             context.getSystemService(PowerManager::class.java)?.isInteractive ?: true

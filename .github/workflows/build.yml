@@ -107,8 +107,6 @@ jobs:
             --arg note "$note" \
             '{schema:$schema,channel:"stable",versionCode:$versionCode,versionName:$versionName,tag:$tag,publishedAt:$publishedAt,minSdk:$minSdk,apk:{url:$url,size:$size,sha256:$sha},notes:[$note]}' > dist/update.json
           echo "$sha  $apk_name" > dist/update.apk.sha256
-          git archive --format=zip --prefix="neta-car-music-${RELEASE_VERSION}/" \
-            --output="dist/neta-car-music-${RELEASE_VERSION}-${RELEASE_CODE}-source.zip" "$GITHUB_SHA"
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
@@ -116,13 +114,12 @@ jobs:
           name: 吒友爱听 ${{ steps.version.outputs.name }} (${{ steps.version.outputs.code }})
           body: |
             吒友爱听，面向哪吒车机 Android 11。更新包校验 SHA-256、包名、版本和签名。
-            本软件按 AGPL-3.0 分发，对应源码见下方 source.zip 和本标签的 Source code。
+            本软件按 AGPL-3.0 分发，对应源码见本标签的 Source code。
             上游项目：https://github.com/mytv-android/myMusic
           files: |
             dist/*.apk
             dist/update.json
             dist/update.apk.sha256
-            dist/*-source.zip
           fail_on_unmatched_files: true
           prerelease: false
           make_latest: 'true'

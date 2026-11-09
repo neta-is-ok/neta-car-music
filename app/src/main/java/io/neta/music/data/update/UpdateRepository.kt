@@ -16,16 +16,21 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import io.neta.music.BuildConfig
 import io.neta.music.data.SettingsStore
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -35,6 +40,8 @@ import java.io.File
 import java.io.IOException
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 @Serializable
 data class UpdateManifest(
@@ -85,7 +92,7 @@ data class UpdateUiState(
 enum class InstallResult { Launched, NeedsPermission, Failed }
 
 @Serializable
-private data class UpdateCdnProvider(val prefix: String)
+private data class UpdateCdnProvider(val name: String = "", val prefix: String)
 
 class UpdateRepository(
     private val context: Context,
@@ -99,10 +106,17 @@ class UpdateRepository(
     private val mirrors by lazy {
         context.assets.open("cdn-providers.json").bufferedReader().use { reader ->
             json.decodeFromString<List<UpdateCdnProvider>>(reader.readText())
-                .map { it.prefix.trim().trimEnd('/') + "/" }
-                .distinct()
+                .map {
+                    val prefix = it.prefix.trim().trimEnd('/')
+                    it.copy(prefix = if (prefix.isEmpty()) "" else "$prefix/")
+                }
+                .distinctBy { it.prefix }
         }
     }
+    private val downloadHttp = http.newBuilder()
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(10, TimeUnit.SECONDS)
+        .build()
     private val _state = MutableStateFlow(UpdateUiState())
     val state: StateFlow<UpdateUiState> = _state.asStateFlow()
 
@@ -113,9 +127,9 @@ class UpdateRepository(
 
     /** 检查更新与下载各自缓存一份线路测速结果，避免每次请求都重新探测。 */
     private var manifestProbeExpiry = 0L
-    private var manifestProbeOrder: List<String>? = null
+    private var manifestProbeOrder: List<UpdateCdnProvider>? = null
     private var downloadProbeExpiry = 0L
-    private var downloadProbeOrder: List<String>? = null
+    private var downloadProbeOrder: List<UpdateCdnProvider>? = null
 
     @Volatile
     private var downloadCancelled = false
@@ -191,6 +205,8 @@ class UpdateRepository(
                 )
             }
             true
+        } catch (error: CancellationException) {
+            throw error
         } catch (error: Exception) {
             _state.update {
                 it.copy(
@@ -234,20 +250,34 @@ class UpdateRepository(
         try {
             var lastError: Exception? = null
             var downloaded = false
-            for (mirror in downloadMirrorOrder(info.url)) {
+            val order = downloadMirrorOrder(info.url)
+            for ((index, mirror) in order.withIndex()) {
+                currentCoroutineContext().ensureActive()
                 if (downloadCancelled) break
-                _state.update { it.copy(progress = 0f) }
+                val name = mirror.name.ifBlank { Uri.parse(mirror.prefix).host ?: "直连" }
+                _state.update {
+                    it.copy(
+                        progress = 0f,
+                        phaseLabel = "${if (index == 0) "正在下载" else "已切换线路"} · $name（${index + 1}/${order.size}）",
+                    )
+                }
                 try {
                     downloadFrom(mirrorUrl(mirror, info.url), target, info)
                     downloaded = true
                     break
+                } catch (error: CancellationException) {
+                    throw error
                 } catch (error: Exception) {
-                    activeCall = null
                     target.delete()
                     lastError = error
+                    if (downloadCancelled) break
+                    // 本轮失败的线路排到缓存末尾，手动重试时不再优先使用它。
+                    downloadProbeOrder = downloadProbeOrder?.filterNot { it == mirror }?.plus(mirror)
+                    Log.w(TAG, "更新下载线路 $name 失败，尝试下一条：${error.message}")
                 }
             }
-            if (!downloaded) throw lastError ?: IOException("下载已取消")
+            if (!downloaded) throw if (downloadCancelled) IOException("下载已取消")
+                else lastError ?: IOException("所有下载线路均不可用")
             _state.update { it.copy(phase = UpdatePhase.Verifying, phaseLabel = "正在校验 SHA-256", progress = 1f) }
             verifyApk(target, info)
             _state.update {
@@ -261,8 +291,10 @@ class UpdateRepository(
                 )
             }
             true
+        } catch (error: CancellationException) {
+            target.delete()
+            throw error
         } catch (error: Exception) {
-            activeCall = null
             target.delete()
             _state.update {
                 it.copy(
@@ -273,6 +305,9 @@ class UpdateRepository(
                 )
             }
             false
+        } finally {
+            activeCall?.cancel()
+            activeCall = null
         }
     }
 
@@ -284,73 +319,112 @@ class UpdateRepository(
     }
 
     /** 从单个线路下载更新包；大小或摘要对不上会抛异常，由调用方换下一条线路。 */
-    private fun downloadFrom(url: String, target: File, info: UpdateInfo) {
+    private suspend fun downloadFrom(url: String, target: File, info: UpdateInfo): Unit = coroutineScope {
         val request = Request.Builder()
             .url(url)
             .header("User-Agent", USER_AGENT)
             .build()
-        val call = http.newCall(request)
+        val call = downloadHttp.newCall(request)
+        val received = AtomicLong(0L)
+        val slowDetected = AtomicBoolean(false)
         activeCall = call
-        call.execute().use { response ->
-            if (!response.isSuccessful) throw IOException("下载失败（HTTP ${response.code}）")
-            val body = response.body
-            val total = info.size.takeIf { it > 0 } ?: body.contentLength()
-            val digest = MessageDigest.getInstance("SHA-256")
-            var copied = 0L
-            val progressGate = DownloadProgressGate()
-            val buffer = ByteArray(64 * 1024)
-            target.outputStream().use { output ->
-                body.byteStream().use { input ->
-                    while (true) {
-                        val read = input.read(buffer)
-                        if (read <= 0) break
-                        output.write(buffer, 0, read)
-                        digest.update(buffer, 0, read)
-                        copied += read
-                        if (total > 0 && progressGate.shouldEmit(System.nanoTime(), complete = copied >= total)) {
-                            _state.update { it.copy(progress = (copied.toFloat() / total).coerceIn(0f, 1f)) }
+        if (downloadCancelled) call.cancel()
+        // 只靠 readTimeout 无法识别持续返回少量数据的节点；每 10 秒检查一次实际吞吐量。
+        val watchdog = launch(Dispatchers.IO) {
+            var windowStartedAt = System.nanoTime()
+            var windowStartedBytes = 0L
+            try {
+                while (isActive) {
+                    delay(1_000L)
+                    val now = System.nanoTime()
+                    val elapsed = now - windowStartedAt
+                    if (elapsed < SLOW_WINDOW_MS * 1_000_000L) continue
+                    val bytes = received.get()
+                    val speed = (bytes - windowStartedBytes) * 1_000_000_000L / elapsed
+                    if (speed < MIN_DOWNLOAD_BYTES_PER_SECOND) {
+                        slowDetected.set(true)
+                        call.cancel()
+                        break
+                    }
+                    windowStartedAt = now
+                    windowStartedBytes = bytes
+                }
+            } finally {
+                // 父协程取消时也中断阻塞读取。
+                call.cancel()
+            }
+        }
+        try {
+            call.execute().use { response ->
+                if (!response.isSuccessful) throw IOException("下载失败（HTTP ${response.code}）")
+                val body = response.body
+                val total = info.size.takeIf { it > 0 } ?: body.contentLength()
+                val digest = MessageDigest.getInstance("SHA-256")
+                var copied = 0L
+                val progressGate = DownloadProgressGate()
+                val buffer = ByteArray(64 * 1024)
+                target.outputStream().use { output ->
+                    body.byteStream().use { input ->
+                        while (true) {
+                            currentCoroutineContext().ensureActive()
+                            val read = input.read(buffer)
+                            if (read <= 0) break
+                            output.write(buffer, 0, read)
+                            digest.update(buffer, 0, read)
+                            copied += read
+                            received.set(copied)
+                            if (total > 0 && progressGate.shouldEmit(System.nanoTime(), complete = copied >= total)) {
+                                _state.update { it.copy(progress = (copied.toFloat() / total).coerceIn(0f, 1f)) }
+                            }
                         }
                     }
                 }
+                if (info.size > 0 && copied != info.size) {
+                    throw IOException("下载大小与更新清单不一致")
+                }
+                val actual = digest.digest().joinToString("") { "%02x".format(it) }
+                if (!actual.equals(info.sha256, ignoreCase = true)) {
+                    throw IOException("更新包 SHA-256 校验失败")
+                }
             }
-            if (info.size > 0 && copied != info.size) {
-                throw IOException("下载大小与更新清单不一致")
-            }
-            val actual = digest.digest().joinToString("") { "%02x".format(it) }
-            if (!actual.equals(info.sha256, ignoreCase = true)) {
-                throw IOException("更新包 SHA-256 校验失败")
-            }
+        } catch (error: IOException) {
+            if (slowDetected.get()) throw IOException("下载速度持续低于 100 KB/s，已放弃当前线路", error)
+            throw error
+        } finally {
+            watchdog.cancel()
+            call.cancel()
+            activeCall = null
         }
-        activeCall = null
     }
 
     /**
      * GitHub 更新清单与 APK 均使用 assets/cdn-providers.json 中的 CDN 镜像。
      * 并发测速后按耗时升序使用，测速结果缓存 5 分钟；不可达的线路留在末尾作为兜底。
      */
-    private suspend fun probeMirrors(target: String): List<String> = coroutineScope {
+    private suspend fun probeMirrors(target: String): List<UpdateCdnProvider> = coroutineScope {
         val results = mirrors.map { mirror ->
             async {
                 val startedAt = System.nanoTime()
-                val reachable = withTimeoutOrNull(PROBE_TIMEOUT_MS) {
-                    try {
-                        val request = Request.Builder()
-                            .url(mirrorUrl(mirror, target))
-                            .head()
-                            .header("User-Agent", USER_AGENT)
-                            .build()
-                        http.newCall(request).execute().use { it.isSuccessful || it.code == 405 }
-                    } catch (_: Exception) {
-                        false
-                    }
+                val reachable = try {
+                    val request = Request.Builder()
+                        .url(mirrorUrl(mirror, target))
+                        .head()
+                        .header("User-Agent", USER_AGENT)
+                        .build()
+                    val call = http.newCall(request)
+                    // execute() 是阻塞调用，协程超时不会中断它；必须设置 Call 的总超时。
+                    call.timeout().timeout(PROBE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                    call.execute().use { it.isSuccessful || it.code == 405 }
+                } catch (_: Exception) {
+                    false
                 }
-                mirror to if (reachable == true) System.nanoTime() - startedAt else Long.MAX_VALUE
+                mirror to if (reachable) System.nanoTime() - startedAt else Long.MAX_VALUE
             }
         }.awaitAll()
-        results.sortedWith(compareBy({ it.second }, { it.first })).map { it.first }
+        results.sortedBy { it.second }.map { it.first }
     }
 
-    private suspend fun manifestMirrorOrder(): List<String> {
+    private suspend fun manifestMirrorOrder(): List<UpdateCdnProvider> {
         val now = System.currentTimeMillis()
         manifestProbeOrder?.takeIf { now < manifestProbeExpiry }?.let { return it }
         return probeMirrors(MANIFEST_URL).also {
@@ -359,7 +433,7 @@ class UpdateRepository(
         }
     }
 
-    private suspend fun downloadMirrorOrder(target: String): List<String> {
+    private suspend fun downloadMirrorOrder(target: String): List<UpdateCdnProvider> {
         val now = System.currentTimeMillis()
         downloadProbeOrder?.takeIf { now < downloadProbeExpiry }?.let { return it }
         return probeMirrors(target).also {
@@ -369,7 +443,7 @@ class UpdateRepository(
     }
 
     /** 依次尝试各线路，返回第一个能解析且 schema 正确的更新清单。 */
-    private fun fetchManifest(order: List<String>): UpdateManifest? {
+    private fun fetchManifest(order: List<UpdateCdnProvider>): UpdateManifest? {
         for (mirror in order) {
             val body = fetchText(mirrorUrl(mirror, MANIFEST_URL)) ?: continue
             val manifest = runCatching { json.decodeFromString<UpdateManifest>(body) }.getOrNull() ?: continue
@@ -384,15 +458,17 @@ class UpdateRepository(
             .header("Cache-Control", "no-cache")
             .header("User-Agent", USER_AGENT)
             .build()
-        http.newCall(request).execute().use { response ->
+        val call = http.newCall(request)
+        call.timeout().timeout(MANIFEST_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        call.execute().use { response ->
             if (response.isSuccessful) response.body.string() else null
         }
     } catch (_: Exception) {
         null
     }
 
-    private fun mirrorUrl(mirror: String, target: String): String =
-        if (mirror.isEmpty()) target else mirror + target
+    private fun mirrorUrl(mirror: UpdateCdnProvider, target: String): String =
+        mirror.prefix + target
 
     private fun verifyApk(file: File, info: UpdateInfo) {
         val current = currentPackageInfo() ?: throw IOException("无法读取当前版本")
@@ -622,6 +698,9 @@ class UpdateRepository(
         private const val USER_AGENT = "NetaCarMusic-Android"
         private const val PROBE_TTL_MS = 5 * 60 * 1000L
         private const val PROBE_TIMEOUT_MS = 3_000L
+        private const val MANIFEST_TIMEOUT_MS = 10_000L
+        private const val SLOW_WINDOW_MS = 10_000L
+        private const val MIN_DOWNLOAD_BYTES_PER_SECOND = 100L * 1024L
 
     }
 }

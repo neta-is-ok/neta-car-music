@@ -314,6 +314,30 @@ class PlaybackService : MediaSessionService() {
 
     /** 播放器是空的时候（进程刚起来）收到播放：从 ViewModel 取回上次的队列，当前这首解析好地址再交给 Media3 开播。 */
     private inner class ResumptionCallback : MediaSession.Callback {
+        override fun onConnectAsync(
+            session: MediaSession,
+            controller: MediaSession.ControllerInfo,
+        ): ListenableFuture<MediaSession.ConnectionResult> {
+            val result = MediaSession.ConnectionResult.AcceptedResultBuilder(session, controller)
+            if (!controller.isTrusted) {
+                // Media3 1.11 默认只给外部非受信控制器读取权限；歌词助手还需要基本播放控制。
+                val commands = MediaSession.ConnectionResult.DEFAULT_UNTRUSTED_PLAYER_COMMANDS.buildUpon()
+                    .addAll(
+                        Player.COMMAND_PLAY_PAUSE,
+                        Player.COMMAND_PREPARE,
+                        Player.COMMAND_STOP,
+                        Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM,
+                        Player.COMMAND_SEEK_TO_NEXT,
+                        Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM,
+                        Player.COMMAND_SEEK_TO_PREVIOUS,
+                        Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM,
+                    )
+                    .build()
+                result.setAvailablePlayerCommands(commands)
+            }
+            return Futures.immediateFuture(result.build())
+        }
+
         @Suppress("DEPRECATION")
         override fun onPlayerCommandRequest(
             session: MediaSession,

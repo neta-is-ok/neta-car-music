@@ -261,6 +261,7 @@ class MusicActions(private val model: MusicViewModel) {
     fun moveSource(id: String, delta: Int) = model.moveSource(id, delta)
     fun resetSources() = model.resetSources()
     fun setStartupTab(route: String) = model.setStartupTab(route)
+    fun setAutoPlayOnLaunch(value: Boolean) = model.setAutoPlayOnLaunch(value)
     fun setPlaybackMode(mode: PlaybackMode) = model.setPlaybackMode(mode)
     fun setPinnedProvider(id: String?) = model.setPinnedProvider(id)
     fun setAllowPreview(value: Boolean) = model.setAllowPreview(value)

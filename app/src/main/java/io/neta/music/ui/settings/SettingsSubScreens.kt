@@ -531,6 +531,18 @@ internal fun PlaybackSettingsScreen(
     val searchable = state.providers.filter { it.search }
     val priority = aggregation.priorityFor(searchable.map { it.id })
     SettingsPage(SettingsSection.Playback, embedded, onBack) {
+        item(key = "startupHead", contentType = "sectionHeader") { SectionLabel("启动播放") }
+        item(key = "autoPlayOnLaunch", contentType = "switch") {
+            SwitchRow(
+                title = "启动时自动播放",
+                checked = state.autoPlayOnLaunch,
+                onCheckedChange = actions::setAutoPlayOnLaunch,
+                index = 0,
+                count = 1,
+                summary = "打开应用后，从上次的歌曲和进度继续播放",
+                icon = Icons.Filled.MusicNote,
+            )
+        }
         item(key = "crossHead", contentType = "sectionHeader") { SectionLabel("切歌过渡") }
         item(key = "crossSwitch", contentType = "switch") {
             SwitchRow(

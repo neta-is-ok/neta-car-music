@@ -158,7 +158,15 @@ fun MyMusicApp(model: MusicViewModel) {
     var timerOpen by rememberSaveable { mutableStateOf(false) }
 
     fun openTab(tab: String) {
-        if (selectedTab == tab) {
+        // 设置不作为 tab 的恢复状态保存，否则切回榜单时会把刚退出的设置页恢复回来。
+        while (nav.currentDestination?.route?.startsWith("settings") == true) {
+            if (!nav.popBackStack()) break
+        }
+        val currentTab = nav.currentBackStack.value.lastOrNull { entry ->
+            TopTab.entries.any { it.route == entry.destination.route }
+        }?.destination?.route
+        if (currentTab == tab) {
+            selectedTab = tab
             nav.popBackStack(tab, inclusive = false)
             return
         }

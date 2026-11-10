@@ -164,13 +164,17 @@ object NativeHttp {
                             return
                         }
                         val cookies = buildMap {
-                            it.headers.values("Set-Cookie").forEach { header ->
-                                val pair = header.substringBefore(';').trim()
-                                val index = pair.indexOf('=')
-                                if (index > 0) {
-                                    put(pair.substring(0, index).trim(), pair.substring(index + 1).trim())
+                            // 登录凭据可能在 302 响应里；按跳转顺序合并，让后续响应覆盖旧值。
+                            generateSequence(it) { response -> response.priorResponse }
+                                .toList().asReversed().forEach { response ->
+                                    response.headers.values("Set-Cookie").forEach { header ->
+                                        val pair = header.substringBefore(';').trim()
+                                        val index = pair.indexOf('=')
+                                        if (index > 0) {
+                                            put(pair.substring(0, index).trim(), pair.substring(index + 1).trim())
+                                        }
+                                    }
                                 }
-                            }
                         }
                         if (continuation.isActive) {
                             continuation.resume(

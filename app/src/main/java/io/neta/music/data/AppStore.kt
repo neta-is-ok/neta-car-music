@@ -160,6 +160,7 @@ class SettingsStore(private val context: Context) {
     private val chartsSourceKey = stringPreferencesKey("charts_source")
     private val playlistsSourceKey = stringPreferencesKey("playlists_source")
     private val startupTabKey = stringPreferencesKey("startup_tab")
+    private val autoPlayOnLaunchKey = booleanPreferencesKey("auto_play_on_launch")
     private val playlistsModeKey = stringPreferencesKey("playlists_mode")
     private val listenGroupKey = stringPreferencesKey("listen_group")
     private val themeKey = stringPreferencesKey("theme")
@@ -243,6 +244,7 @@ class SettingsStore(private val context: Context) {
             chartsSource = values[chartsSourceKey] ?: "",
             playlistsSource = values[playlistsSourceKey] ?: "",
             startupTab = values[startupTabKey] ?: "",
+            autoPlayOnLaunch = values[autoPlayOnLaunchKey] ?: false,
             playlistsMode = values[playlistsModeKey] ?: "",
             listenGroup = values[listenGroupKey] ?: "",
             theme = values[themeKey] ?: "system",
@@ -318,6 +320,7 @@ class SettingsStore(private val context: Context) {
     suspend fun chartsSource(value: String) = context.dataStore.edit { it[chartsSourceKey] = value }
     suspend fun playlistsSource(value: String) = context.dataStore.edit { it[playlistsSourceKey] = value }
     suspend fun startupTab(value: String) = context.dataStore.edit { it[startupTabKey] = value }
+    suspend fun autoPlayOnLaunch(value: Boolean) = context.dataStore.edit { it[autoPlayOnLaunchKey] = value }
     suspend fun playlistsMode(value: String) = context.dataStore.edit { it[playlistsModeKey] = value }
     suspend fun listenGroup(value: String) = context.dataStore.edit { it[listenGroupKey] = value }
     suspend fun theme(value: String) = context.dataStore.edit { it[themeKey] = value }
@@ -566,6 +569,8 @@ data class AppSettings(
     val playlistsSource: String = "",
     /** 冷启动打开的顶层入口（TopTab.route），空表示默认「榜单」。 */
     val startupTab: String = "",
+    /** 打开应用时从上次的歌曲和进度续播；默认关闭。 */
+    val autoPlayOnLaunch: Boolean = false,
     /** 歌单页上次用的浏览方式（PlaylistMode 名字），空表示默认「推荐」。 */
     val playlistsMode: String = "",
     /** 听歌模式页上次选的分组，空表示「全部」。 */

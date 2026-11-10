@@ -1965,7 +1965,10 @@ class QQProvider : BaseNativeProvider(QQ_INFO) {
             authorize.cookies.forEach { (name, value) ->
                 if (value.isNotBlank()) cookies[name] = value
             }
-            val code = Regex("[?&]code=([^&\"'\\s]+)").find(authorize.body)?.groupValues?.get(1).orEmpty()
+            val code = firstNonEmpty(
+                parseQuery(URI(authorize.finalUrl).rawQuery.orEmpty())["code"].orEmpty(),
+                Regex("[?&]code=([^&\"'\\s]+)").find(authorize.body)?.groupValues?.get(1).orEmpty(),
+            )
             if (code.isEmpty()) {
                 return QRCheckResult("failed", "qq oauth authorize missing code", "")
             }

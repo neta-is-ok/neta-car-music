@@ -181,6 +181,7 @@ data class MusicUiState(
     val playlistsSource: String = "",
     /** 冷启动打开的顶层入口（TopTab.route），空表示还没读到设置。 */
     val startupTab: String = "",
+    val autoPlayOnLaunch: Boolean = false,
     /** 歌单页上次用的浏览方式；还没读到设置时是默认的「推荐」。 */
     val playlistsMode: PlaylistMode = PlaylistMode.Recommend,
     /** 听歌模式页上次选的分组，空表示「全部」。 */
@@ -509,6 +510,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             chartsSource = settings.chartsSource,
             playlistsSource = settings.playlistsSource,
             startupTab = settings.startupTab,
+            autoPlayOnLaunch = settings.autoPlayOnLaunch,
             playlistsMode = settings.playlistsMode.toPlaylistMode(),
             listenGroup = settings.listenGroup.ifBlank { "全部" },
             theme = settings.theme,
@@ -3868,9 +3870,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             lastProgressRaw = -1L
             progressJumpAllowed = true
             player.addListener(playerListener)
-            connected.value = player
             if (progressJob?.isActive != true) startProgress()
             onControllerConnected(player)
+            // 先建立队列恢复任务，再唤醒 awaitController 的调用方。
+            connected.value = player
         }, ContextCompat.getMainExecutor(context))
     }
 
@@ -4166,6 +4169,21 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         if (fresh) base.update { it.copy(playerOpen = false, posterOpen = false) }
         connectController()
         uiLaunched.value = true
+        if (fresh) viewModelScope.launch {
+            if (!app.settings.state.first().autoPlayOnLaunch) return@launch
+            val player = awaitController() ?: return@launch
+            restoreJob?.await()
+            if (player.playWhenReady) return@launch
+            if (dormant != null && player.mediaItemCount == 0) {
+                launchResume()
+            } else if (player.mediaItemCount > 0) {
+                when (player.playbackState) {
+                    Player.STATE_IDLE -> player.prepare()
+                    Player.STATE_ENDED -> player.seekToDefaultPosition()
+                }
+                player.play()
+            }
+        }
     }
 
     fun openFromWidget(target: WidgetTarget) {
@@ -4343,6 +4361,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setStartupTab(route: String) = viewModelScope.launch { app.settings.startupTab(route) }
+    fun setAutoPlayOnLaunch(value: Boolean) = viewModelScope.launch { app.settings.autoPlayOnLaunch(value) }
 
     /**
      * 音乐源开关。关掉的平台从启用列表和优先列表里一起消失：聚合搜索、来源条、换源都不再用它，

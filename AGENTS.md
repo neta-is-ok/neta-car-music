@@ -15,7 +15,7 @@
 - 主应用：`app/`；applicationId、namespace 与源码包名统一为 `io.neta.music`，目录、测试、组件类名与 Baseline Profile 同步维护。
 - 界面外壳：`ui/AppNavigation.kt`；窗口规则：`ui/components/Window.kt`；底部播放条：`ui/adaptive/LargeScreen.kt`。
 - 播放服务：`playback/PlaybackService.kt`；播放状态与操作：`ui/MusicViewModel.kt`。
-- 应用内更新：`data/update/UpdateRepository.kt`；发布流程：`.github/workflows/build.yml`。
+- 应用内更新：`data/update/UpdateRepository.kt`；本地发布：`scripts/release.py`；CI 编译：`.github/workflows/build.yml`。
 - `version.properties` 是 versionName / versionCode 的唯一来源。初始版本为 `0.0.1 (1)`；每次发布递增 versionCode。
 
 以上 Kotlin 路径均相对 `app/src/main/java/io/neta/music/`。
@@ -25,6 +25,7 @@
 - 读取目标文件及直接调用方后再修改，保留并行任务的兼容改动，不清理无关工作区或暂存区。
 - 复用已有 Compose、Media3、Insets 和设置结构，不引入并行播放器或额外架构。
 - 改动 Kotlin、类型、依赖、Gradle 或 manifest 后，至少执行 `./gradlew :app:assembleDebug`；涉及 Release 配置时补充对应构建和产物核对。
+- 正式发布执行本地 `:app:assembleRelease`，复用仍适用的编译与 UI 验证结果。发布检查仅保留产物包名、版本、正式签名及更新清单所需的 SHA-256；不重复构建、下载回验或增加额外验证流程。
 - 禁止新增或运行单元测试。可按变更需要编译现有 Android 仪器测试，但不要用测试通过代替界面与运行验证。
 - 同一工作区一次只运行一个 Gradle 构建，保留 daemon 和构建缓存。
 - UI 改动检查实际渲染与关键交互；区分编译、模拟器与实车结果，未验证的项目明确说明。
@@ -35,8 +36,11 @@
 - 使用 `main` 分支。提交、推送、打标签、发布和工作区清理需要用户明确授权；完成修改不自动提交。
 - 远端为 `git@github.com:neta-is-ok/neta-car-music.git`，默认应用更新仓库为 `neta-is-ok/neta-car-music`。
 - 提交使用简洁的中文 Conventional Commits，只包含本次改动。
-- 普通分支推送及 PR 只编译，不创建 Release。发布使用 `v<versionName>-<versionCode>` 标签，例如 `v0.0.1-1`；标签必须与源码版本完全一致。
+- 每次发布先比较上次正式 Release 与当前源码，向用户展示拟发布的版本号和完整更新说明；用户确认本次更新内容后，才能推送发布提交、标签或创建 GitHub Release。最初要求“执行发布”不代替对具体更新内容的确认。
+- 发布统一由本地完成编译、正式签名及更新附件生成，再由本地脚本上传 GitHub Release。使用 `scripts/release.py prepare --notes <项目内说明文件>` 准备产物，确认后执行 `scripts/release.py publish`；更新说明存放在忽略的 `build/` 或 `dist/` 中，不另建交接文档。
+- 普通分支推送及 PR 的 GitHub Actions 只编译 Debug，不再通过标签或手动工作流构建、签名或发布 Release。发布使用 `v<versionName>-<versionCode>` 标签，例如 `v0.0.1-1`；标签必须与源码版本完全一致，并指向构建该 APK 的提交。
+- 发布脚本的 Git 推送、Release 创建和附件上传必须支持有上限的重试；中断后可复用本地产物重跑上传，不重新编译。先创建草稿，三个更新附件上传完成后才公开；失败时保留本地产物和草稿，不自动清理或覆盖其他版本。
 - APK 命名为 `neta-car-music-<versionName>-<versionCode>.apk`，并随 Release 发布 `update.json` 和 `update.apk.sha256`。对应源码通过版本标签及 GitHub 自动生成的 Source code 归档提供，不额外生成或上传源码包。
-- Release 必须使用稳定专用签名；本地密钥放在当前仓库根目录 `keystore.jks`，配置放在 `signing.properties`，两者均忽略、不提交，不放到仓库外的配置目录。CI 通过 GitHub Secrets 提供签名，不回退到 debug 签名发布。
+- Release 必须使用稳定专用签名；本地密钥放在当前仓库根目录 `keystore.jks`，配置放在 `signing.properties`，两者均忽略、不提交，不放到仓库外的配置目录。发布不依赖 CI 签名 Secrets，不回退到 debug 签名。
 - 应用更新只指向构建时配置的本项目 GitHub 仓库。未配置仓库时不请求上游更新，手动检查应显示“尚未配置更新仓库”。
 - 更新清单与 APK 使用 `app/src/main/assets/cdn-providers.json` 中的 CDN 镜像；该文件初始来自 Netamade，保留独立副本供本仓库构建。

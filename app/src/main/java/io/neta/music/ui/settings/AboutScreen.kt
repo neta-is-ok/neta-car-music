@@ -257,7 +257,7 @@ private fun AppHeader(versionName: String, versionCode: Long) {
     }
 }
 
-/** 新版本卡片：展示更新说明和下载进度；后台下载完成后可在这里主动安装。 */
+/** 新版本卡片：后台下载不挡操作，完成后在应用前台自动打开安装器，也可在这里重新打开。 */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun UpdateCard(update: UpdateUiState, actions: MusicActions, progress: () -> Float) {
@@ -298,8 +298,7 @@ private fun UpdateCard(update: UpdateUiState, actions: MusicActions, progress: (
             Row(Modifier.padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Icon(Icons.Filled.Verified, null, Modifier.size(18.dp), tint = content)
                 Text(
-                    if (update.backgroundDownload) "下载后自动校验 SHA-256、包名和版本号，完成后可在这里安装。"
-                    else "下载后自动校验 SHA-256、包名和版本号，然后自动打开系统安装器。",
+                    "下载后自动校验 SHA-256、包名和版本号，应用在前台时自动打开系统安装器。",
                     style = MaterialTheme.typography.bodyMedium,
                     color = content,
                 )

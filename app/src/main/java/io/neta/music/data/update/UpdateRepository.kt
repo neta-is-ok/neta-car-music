@@ -18,8 +18,6 @@ import io.neta.music.BuildConfig
 import io.neta.music.data.SettingsStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
@@ -27,6 +25,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -87,6 +86,7 @@ data class UpdateUiState(
     val error: String = "",
     val file: File? = null,
     val permissionRequired: Boolean = false,
+    /** 只收起下载期间的进度弹窗，不阻止完成后的前台安装提示。 */
     val backgroundDownload: Boolean = false,
 )
 
@@ -126,12 +126,6 @@ class UpdateRepository(
 
     private var installResultReceiver: BroadcastReceiver? = null
 
-    /** 检查更新与下载各自缓存一份线路测速结果，避免每次请求都重新探测。 */
-    private var manifestProbeExpiry = 0L
-    private var manifestProbeOrder: List<UpdateCdnProvider>? = null
-    private var downloadProbeExpiry = 0L
-    private var downloadProbeOrder: List<UpdateCdnProvider>? = null
-
     @Volatile
     private var downloadCancelled = false
 
@@ -160,7 +154,7 @@ class UpdateRepository(
         }
         _state.update { it.copy(phase = UpdatePhase.Checking, phaseLabel = "正在检查更新", error = "", permissionRequired = false) }
         try {
-            val manifest = fetchManifest(manifestMirrorOrder())
+            val manifest = fetchManifest(mirrorOrder())
                 ?: throw IOException("检查更新失败：所有线路均不可用")
             settings.lastUpdateCheck(System.currentTimeMillis())
             val current = currentPackageInfo() ?: throw IOException("无法读取当前版本")
@@ -253,7 +247,8 @@ class UpdateRepository(
         try {
             var lastError: Exception? = null
             var downloaded = false
-            val order = downloadMirrorOrder(info.url)
+            var successfulMirror: UpdateCdnProvider? = null
+            val order = mirrorOrder()
             for ((index, mirror) in order.withIndex()) {
                 currentCoroutineContext().ensureActive()
                 if (downloadCancelled) break
@@ -267,6 +262,7 @@ class UpdateRepository(
                 try {
                     downloadFrom(mirrorUrl(mirror, info.url), target, info)
                     downloaded = true
+                    successfulMirror = mirror
                     break
                 } catch (error: CancellationException) {
                     throw error
@@ -274,8 +270,6 @@ class UpdateRepository(
                     target.delete()
                     lastError = error
                     if (downloadCancelled) break
-                    // 本轮失败的线路排到缓存末尾，手动重试时不再优先使用它。
-                    downloadProbeOrder = downloadProbeOrder?.filterNot { it == mirror }?.plus(mirror)
                     Log.w(TAG, "更新下载线路 $name 失败，尝试下一条：${error.message}")
                 }
             }
@@ -283,6 +277,8 @@ class UpdateRepository(
                 else lastError ?: IOException("所有下载线路均不可用")
             _state.update { it.copy(phase = UpdatePhase.Verifying, phaseLabel = "正在校验 SHA-256", progress = 1f) }
             verifyApk(target, info)
+            // 只有大小、SHA-256、包名和版本均校验通过，才记为成功线路；清单可达不等于 APK 可用。
+            successfulMirror?.let { settings.lastSuccessfulUpdateCdn(it.prefix) }
             _state.update {
                 it.copy(
                     phase = UpdatePhase.Ready,
@@ -290,7 +286,7 @@ class UpdateRepository(
                     progress = 1f,
                     file = target,
                     error = "",
-                    message = if (it.backgroundDownload) "更新包已下载并校验，可在关于与更新中安装"
+                    message = if (it.backgroundDownload) "更新包已下载并校验，回到应用后会自动打开系统安装器"
                         else "更新包校验通过，正在打开系统安装器",
                 )
             }
@@ -409,49 +405,10 @@ class UpdateRepository(
         }
     }
 
-    /**
-     * GitHub 更新清单与 APK 均使用 assets/cdn-providers.json 中的 CDN 镜像。
-     * 并发测速后按耗时升序使用，测速结果缓存 5 分钟；不可达的线路留在末尾作为兜底。
-     */
-    private suspend fun probeMirrors(target: String): List<UpdateCdnProvider> = coroutineScope {
-        val results = mirrors.map { mirror ->
-            async {
-                val startedAt = System.nanoTime()
-                val reachable = try {
-                    val request = Request.Builder()
-                        .url(mirrorUrl(mirror, target))
-                        .head()
-                        .header("User-Agent", USER_AGENT)
-                        .build()
-                    val call = http.newCall(request)
-                    // execute() 是阻塞调用，协程超时不会中断它；必须设置 Call 的总超时。
-                    call.timeout().timeout(PROBE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-                    call.execute().use { it.isSuccessful || it.code == 405 }
-                } catch (_: Exception) {
-                    false
-                }
-                mirror to if (reachable) System.nanoTime() - startedAt else Long.MAX_VALUE
-            }
-        }.awaitAll()
-        results.sortedBy { it.second }.map { it.first }
-    }
-
-    private suspend fun manifestMirrorOrder(): List<UpdateCdnProvider> {
-        val now = System.currentTimeMillis()
-        manifestProbeOrder?.takeIf { now < manifestProbeExpiry }?.let { return it }
-        return probeMirrors(MANIFEST_URL).also {
-            manifestProbeOrder = it
-            manifestProbeExpiry = now + PROBE_TTL_MS
-        }
-    }
-
-    private suspend fun downloadMirrorOrder(target: String): List<UpdateCdnProvider> {
-        val now = System.currentTimeMillis()
-        downloadProbeOrder?.takeIf { now < downloadProbeExpiry }?.let { return it }
-        return probeMirrors(target).also {
-            downloadProbeOrder = it
-            downloadProbeExpiry = now + PROBE_TTL_MS
-        }
+    /** 上次完整下载成功的线路优先，其后按资源列表顺序；不再让全量 HEAD 测速阻塞实际请求。 */
+    private suspend fun mirrorOrder(): List<UpdateCdnProvider> {
+        val previous = settings.state.first().lastSuccessfulUpdateCdn
+        return mirrors.sortedBy { if (it.prefix == previous) 0 else 1 }
     }
 
     /** 依次尝试各线路，返回第一个能解析且 schema 正确的更新清单。 */
@@ -708,8 +665,6 @@ class UpdateRepository(
         val MANIFEST_URL = RELEASES_URL.takeIf { it.isNotBlank() }
             ?.let { "$it/latest/download/update.json" }.orEmpty()
         private const val USER_AGENT = "NetaCarMusic-Android"
-        private const val PROBE_TTL_MS = 5 * 60 * 1000L
-        private const val PROBE_TIMEOUT_MS = 3_000L
         private const val MANIFEST_TIMEOUT_MS = 10_000L
         private const val SLOW_WINDOW_MS = 10_000L
         private const val MIN_DOWNLOAD_BYTES_PER_SECOND = 100L * 1024L

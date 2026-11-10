@@ -60,11 +60,14 @@ class UpdateDownloadService : Service() {
             downloadJob = scope.launch {
                 repository.download()
                 finished = true
-                ServiceCompat.stopForeground(this@UpdateDownloadService, ServiceCompat.STOP_FOREGROUND_REMOVE)
                 val state = repository.state.value
                 if (state.phase == UpdatePhase.Ready || state.phase == UpdatePhase.Error) {
+                    // 保留同一条通知并转为普通结果通知，避免异步移除前台通知时误删刚发布的完成通知。
+                    ServiceCompat.stopForeground(this@UpdateDownloadService, ServiceCompat.STOP_FOREGROUND_DETACH)
                     getSystemService(NotificationManager::class.java)
                         .notify(NOTIFICATION_ID, notification(state, ongoing = false))
+                } else {
+                    ServiceCompat.stopForeground(this@UpdateDownloadService, ServiceCompat.STOP_FOREGROUND_REMOVE)
                 }
                 stopSelf()
             }

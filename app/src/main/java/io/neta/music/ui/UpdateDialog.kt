@@ -32,8 +32,8 @@ import io.neta.music.ui.components.LocalAppWindow
 import io.neta.music.ui.components.tvFocusRing
 
 /**
- * 发现更新后自动下载；可主动切换到后台，下载完成后通过通知或关于页安装。
- * 留在前台更新时沿用自动打开安装器的流程。
+ * 发现更新后自动下载；可主动收起下载进度继续使用应用。
+ * 下载完成后在应用前台自动打开安装器，不依赖车机通知入口。
  *
  * @param suppressed 当前正停在“关于与更新”页面时不叠弹窗，由页面里的更新卡片走同样流程
  */
@@ -46,7 +46,8 @@ fun UpdateDialog(
 ) {
     val info = update.info ?: return
     val busy = update.phase == UpdatePhase.Downloading || update.phase == UpdatePhase.Verifying
-    val visible = !suppressed && !update.backgroundDownload &&
+    val visible = !suppressed &&
+        (!update.backgroundDownload || update.phase == UpdatePhase.Ready || update.phase == UpdatePhase.Error) &&
         update.phase != UpdatePhase.Idle &&
         update.phase != UpdatePhase.Checking
     if (!visible) return

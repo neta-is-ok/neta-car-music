@@ -704,10 +704,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             uiLaunched.first { it }
             checkUpdatesInBackground()
         }
-        // 前台更新完成后自动打开安装器；主动选择后台下载时，通过通知或关于页手动安装。
+        // 后台下载只收起进度；完成时应用在前台就自动打开安装器，否则回到应用时再打开。
         viewModelScope.launch {
             updateState.map { it.phase }.distinctUntilChanged().collect { phase ->
-                if (phase == UpdatePhase.Ready && !updateState.value.backgroundDownload && ForegroundActivity.get() != null) {
+                if (phase == UpdatePhase.Ready && ForegroundActivity.get() != null) {
                     launchUpdateInstaller()
                 }
             }
@@ -5660,10 +5660,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             // 部分盒子它恒为 false，拿它当条件会把用户卡在设置页和弹窗之间来回打转
             pendingUpdateInstall = false
             viewModelScope.launch { launchUpdateInstaller() }
-        } else if (update.phase == UpdatePhase.Ready && !update.backgroundDownload && update.file != null &&
+        } else if (update.phase == UpdatePhase.Ready && update.file != null &&
             (lastInstallOutcome == InstallResult.Launched || lastInstallOutcome == null)
         ) {
-            // 保留前台更新的自动安装流程；主动选择后台下载的版本由用户点击安装。
+            // 无论是否选择后台下载，回到应用后都自动打开已就绪更新的安装界面。
             // 没拉起过（下载完时界面不在前台，比如组件在后台起播）也在这里拉起
             viewModelScope.launch { launchUpdateInstaller() }
         }

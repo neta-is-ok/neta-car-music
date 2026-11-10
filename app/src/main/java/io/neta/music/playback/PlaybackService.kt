@@ -59,6 +59,9 @@ class PlaybackService : MediaSessionService() {
     private var session: MediaSession? = null
     private var equalizer: EqualizerController? = null
     private var player: ExoPlayer? = null
+    private var metadataPlayer: SessionMetadataPlayer? = null
+    private var metadataFavorites: Set<String>? = null
+    private var metadataJob: Job? = null
     private var crossfade: CrossfadeController? = null
     private var carMedia: NetaMediaController? = null
     /** 两路播放器各自的过渡效果参数（低通 / 高通 / 回声），和音频线程共享。 */
@@ -188,10 +191,18 @@ class PlaybackService : MediaSessionService() {
             WidgetLinks.intent(this, WidgetTarget.Player),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        session = MediaSession.Builder(this, primary)
+        val sessionPlayer = SessionMetadataPlayer(primary, metadataFavorites)
+        metadataPlayer = sessionPlayer
+        session = MediaSession.Builder(this, sessionPlayer)
             .setCallback(ResumptionCallback())
             .setSessionActivity(openPlayer)
             .build()
+        metadataJob = app?.appScope?.launch {
+            app.database.dao().songs("favorite").collect { songs ->
+                metadataFavorites = songs.mapTo(hashSetOf()) { it.key }
+                metadataPlayer?.updateFavorites(metadataFavorites.orEmpty())
+            }
+        }
         carMedia = NetaMediaController(this, handler).also {
             app?.carMedia = it
             it.start(primary)
@@ -252,7 +263,9 @@ class PlaybackService : MediaSessionService() {
         val previous = player
         player = next
         next.setAudioAttributes(MEDIA_ATTRIBUTES, true)
-        session?.setPlayer(next)
+        val sessionPlayer = SessionMetadataPlayer(next, metadataFavorites)
+        metadataPlayer = sessionPlayer
+        session?.setPlayer(sessionPlayer)
         carMedia?.attach(next)
         (application as? MyMusicApp)?.rhythmAnalyzer?.useSource(slot)
         equalizer?.let { controller -> attachEqualizer(next, controller) }
@@ -352,6 +365,8 @@ class PlaybackService : MediaSessionService() {
 
     override fun onDestroy() {
         handler.removeCallbacks(foregroundGuard)
+        metadataJob?.cancel()
+        metadataJob = null
         broadcastStartId = -1
         broadcastPlayJob?.cancel()
         broadcastPlayJob = null
@@ -366,6 +381,7 @@ class PlaybackService : MediaSessionService() {
         (application as? MyMusicApp)?.rhythmAnalyzer?.setActive(false)
         session?.release()
         session = null
+        metadataPlayer = null
         player?.release()
         player = null
         super.onDestroy()

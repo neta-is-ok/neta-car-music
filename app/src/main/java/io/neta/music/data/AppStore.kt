@@ -182,6 +182,7 @@ class SettingsStore(private val context: Context) {
     private val localMusicKey = stringPreferencesKey("local_music")
     private val mcpEnabledKey = booleanPreferencesKey("mcp_enabled")
     private val mcpBindingKey = stringPreferencesKey("mcp_binding")
+    private val lastSuccessfulUpdateCdnKey = stringPreferencesKey("last_successful_update_cdn")
     private val dynamicColorKey = booleanPreferencesKey("dynamic_color")
     private val reduceMotionKey = booleanPreferencesKey("reduce_motion")
     private val volumeNormalizationKey = booleanPreferencesKey("volume_normalization")
@@ -274,6 +275,7 @@ class SettingsStore(private val context: Context) {
             }.getOrDefault(LocalMusicSettings()),
             mcpEnabled = values[mcpEnabledKey] ?: false,
             mcpBinding = values[mcpBindingKey] ?: "",
+            lastSuccessfulUpdateCdn = values[lastSuccessfulUpdateCdnKey] ?: "",
             dynamicColor = values[dynamicColorKey] ?: false,
             reduceMotion = values[reduceMotionKey] ?: false,
             volumeNormalization = values[volumeNormalizationKey] ?: false,
@@ -335,6 +337,7 @@ class SettingsStore(private val context: Context) {
     suspend fun provider(value: String) = context.dataStore.edit { it[providerKey] = value }
     suspend fun mcpEnabled(value: Boolean) = context.dataStore.edit { it[mcpEnabledKey] = value }
     suspend fun mcpBinding(value: String) = context.dataStore.edit { it[mcpBindingKey] = value }
+    suspend fun lastSuccessfulUpdateCdn(value: String) = context.dataStore.edit { it[lastSuccessfulUpdateCdnKey] = value }
     suspend fun chartsSource(value: String) = context.dataStore.edit { it[chartsSourceKey] = value }
     suspend fun playlistsSource(value: String) = context.dataStore.edit { it[playlistsSourceKey] = value }
     suspend fun startupTab(value: String) = context.dataStore.edit { it[startupTabKey] = value }
@@ -622,6 +625,7 @@ data class AppSettings(
     /** 本机 MCP 服务启用状态及美式最近一次确认的绑定摘要，只保存在本机。 */
     val mcpEnabled: Boolean = false,
     val mcpBinding: String = "",
+    val lastSuccessfulUpdateCdn: String = "",
     val dynamicColor: Boolean = false,
     val reduceMotion: Boolean = false,
     val volumeNormalization: Boolean = false,

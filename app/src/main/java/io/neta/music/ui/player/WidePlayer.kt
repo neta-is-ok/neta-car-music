@@ -190,7 +190,10 @@ internal fun WidePlayer(
                 {
                     if (showDefault) {
                         WideGuard(idle, lyricsMode, Modifier.graphicsLayer { alpha = defaultChrome() }) {
-                            MoreMenu(song, deepLink, actions, onOpenSource, onLyricsMode)
+                            Row {
+                                LyricsSizeButton(actions, idle)
+                                MoreMenu(song, deepLink, actions, onOpenSource, onLyricsMode, idle)
+                            }
                         }
                     }
                 },
@@ -232,12 +235,12 @@ internal fun WidePlayer(
                                 ToolbarQueueButton(onOpenQueue)
                                 ToolbarSleepButton(sleep, onOpenTimer)
                                 ToolbarSourceButton(onOpenSource)
-                                MoreMenu(song, deepLink, actions, onOpenSource, onLyricsMode)
+                                MoreMenu(song, deepLink, actions, onOpenSource, onLyricsMode, idle)
                             }
                         }
                     }
                 },
-                { if (showFocus) FocusHeader(song, focusAlpha) },
+                { if (showFocus) FocusHeader(song, actions, idle, focusAlpha, focusChrome) },
                 { if (showFocus) FocusDock(playing, actions, idle, !lyricsMode, focusChrome, onLyricsMode, onOpenQueue, stage.onOpenSheet) },
                 {
                     if (showFocus) {
@@ -360,15 +363,20 @@ private fun WideMeta(song: Song, favorite: Boolean, actions: MusicActions, block
 
 /** 专注歌词顶部的“歌名 · 歌手”。 */
 @Composable
-private fun FocusHeader(song: Song, alpha: () -> Float) {
-    Text(
-        "${song.title} · ${song.artist}",
-        Modifier.graphicsLayer { this.alpha = alpha() },
-        style = MaterialTheme.typography.titleMedium.merge(HeaderStyle),
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-    )
+private fun FocusHeader(song: Song, actions: MusicActions, idle: IdleState, alpha: () -> Float, chrome: () -> Float) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            "${song.title} · ${song.artist}",
+            Modifier.weight(1f).graphicsLayer { this.alpha = alpha() },
+            style = MaterialTheme.typography.titleMedium.merge(HeaderStyle),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        WideGuard(idle, false, Modifier.graphicsLayer { this.alpha = chrome() }) {
+            LyricsSizeButton(actions, idle)
+        }
+    }
 }
 
 /**
@@ -509,7 +517,7 @@ private fun wideEstimate(density: Density, width: Int, height: Int, split: FoldS
     val coverMax = wideColumns(width, density.density, split).coverMax
     val full = wideFullTier(height, density.density, meta, seek, coverMax)
     val group = (if (full) TransportGroupSize.Tablet else TransportGroupSize.Compact).height.roundToPx()
-    WideEstimate(full, meta, pill, seek, group, toolbar, DockHeightEstimate.roundToPx(), HeaderStyle.lineHeight.roundToPx())
+    WideEstimate(full, meta, pill, seek, group, toolbar, DockHeightEstimate.roundToPx(), maxOf(48.dp.roundToPx(), HeaderStyle.lineHeight.roundToPx()))
 }
 
 /**

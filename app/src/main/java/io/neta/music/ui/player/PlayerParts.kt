@@ -3,7 +3,6 @@ package io.neta.music.ui.player
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import io.neta.music.ui.theme.LyricsTextScope
-import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Context
 import android.view.accessibility.AccessibilityManager
 import androidx.compose.animation.core.Animatable
@@ -48,6 +47,7 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -96,6 +96,7 @@ import io.neta.music.ui.components.tvFocusRing
 import io.neta.music.ui.theme.LocalAppearance
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.max
@@ -126,6 +127,8 @@ class IdleState {
     var canAutoHide by mutableStateOf(true)
         internal set
     internal var tick by mutableLongStateOf(0L)
+    internal var touchHeld by mutableStateOf(false)
+    internal var openPanels by mutableIntStateOf(0)
 
     fun poke() {
         idle = false
@@ -147,13 +150,15 @@ class IdleState {
 fun rememberIdleState(holdAwake: Boolean = false, timeoutMs: Long = 4_000L): IdleState {
     val state = remember { IdleState() }
     val screenReader = rememberScreenReaderOn()
-    LaunchedEffect(state.tick, screenReader, holdAwake) {
-        state.idle = false
-        // 读屏用户看不到控件淡入淡出，隐藏后焦点会落到看不见的地方，所以不进入空闲
-        state.canAutoHide = !screenReader
-        if (!screenReader && !holdAwake) {
-            delay(timeoutMs)
-            state.idle = true
+    LaunchedEffect(state, screenReader, holdAwake, timeoutMs) {
+        // 只由真实输入和面板状态重启计时，播放进度和界面重组不影响倒计时。
+        snapshotFlow { Triple(state.tick, state.touchHeld, state.openPanels > 0) }.collectLatest { (_, touching, panelOpen) ->
+            state.idle = false
+            state.canAutoHide = !screenReader && !holdAwake && !panelOpen
+            if (state.canAutoHide && !touching) {
+                delay(timeoutMs)
+                state.idle = true
+            }
         }
     }
     return state
@@ -162,25 +167,18 @@ fun rememberIdleState(holdAwake: Boolean = false, timeoutMs: Long = 4_000L): Idl
 /**
  * 是否开着读屏（TalkBack 等），开关变化时实时更新。
  *
- * 只认真正靠触摸探索 / 读屏焦点导航的无障碍服务：自动点击、随选朗读这类辅助 App 也常声明“会语音反馈”，
- * 按语音反馈判断的话它们一开，播放页就再也不会进入空闲。触摸探索开着、或服务声明了触摸探索模式，
- * 才说明用户是在看不见画面的情况下导航。
+ * 以系统实际开启的触摸探索为准。车机辅助服务声明的触摸探索请求标志不代表该模式已启用，
+ * 不能因为服务声明了这个标志就让播放控件常亮。
  */
 @Composable
 fun rememberScreenReaderOn(): Boolean {
     val context = LocalContext.current
     val manager = remember(context) { context.getSystemService(Context.ACCESSIBILITY_SERVICE) as? AccessibilityManager }
-    fun spoken(): Boolean {
-        val m = manager ?: return false
-        if (!m.isEnabled) return false
-        if (m.isTouchExplorationEnabled) return true
-        return m.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_SPOKEN)
-            .any { it.flags and AccessibilityServiceInfo.FLAG_REQUEST_TOUCH_EXPLORATION_MODE != 0 }
-    }
-    var on by remember { mutableStateOf(spoken()) }
+    fun exploring(): Boolean = manager?.isTouchExplorationEnabled == true
+    var on by remember(manager) { mutableStateOf(exploring()) }
     DisposableEffect(manager) {
-        val state = AccessibilityManager.AccessibilityStateChangeListener { on = spoken() }
-        val touch = AccessibilityManager.TouchExplorationStateChangeListener { on = spoken() }
+        val state = AccessibilityManager.AccessibilityStateChangeListener { on = exploring() }
+        val touch = AccessibilityManager.TouchExplorationStateChangeListener { on = exploring() }
         manager?.addAccessibilityStateChangeListener(state)
         manager?.addTouchExplorationStateChangeListener(touch)
         onDispose {
@@ -189,6 +187,23 @@ fun rememberScreenReaderOn(): Boolean {
         }
     }
     return on
+}
+
+/** 弹出窗口的输入不会经过播放页；菜单、字号面板打开期间保持控件可见，关闭后重新计时。 */
+@Composable
+internal fun KeepPlayerAwake(idle: IdleState?, active: Boolean) {
+    DisposableEffect(idle, active) {
+        if (active && idle != null) {
+            idle.openPanels++
+            idle.poke()
+        }
+        onDispose {
+            if (active && idle != null) {
+                idle.openPanels--
+                idle.poke()
+            }
+        }
+    }
 }
 
 /**
@@ -235,11 +250,30 @@ fun Modifier.wakeOnInput(
     onAnyKey: (() -> Unit)? = null,
 ): Modifier = this
     .pointerInput(idle) {
-        awaitPointerEventScope {
-            while (true) {
-                val event = awaitPointerEvent(PointerEventPass.Initial)
-                if (event.type == PointerEventType.Press) idle.poke()
+        try {
+            awaitPointerEventScope {
+                var wakeOnly = false
+                while (true) {
+                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                    when (event.type) {
+                        PointerEventType.Press -> {
+                            if (!idle.touchHeld) wakeOnly = idle.idle
+                            idle.touchHeld = true
+                            idle.poke()
+                        }
+                        PointerEventType.Release -> {
+                            idle.touchHeld = event.changes.any { it.pressed }
+                            if (!idle.touchHeld) idle.poke()
+                        }
+                        PointerEventType.Scroll -> idle.poke()
+                    }
+                    // 唤醒的整次手势只显示控件，不能顺便触发隐藏按钮、歌词跳转或封面手势。
+                    if (wakeOnly) event.changes.forEach { it.consume() }
+                    if (!idle.touchHeld) wakeOnly = false
+                }
             }
+        } finally {
+            idle.touchHeld = false
         }
     }
     .onPreviewKeyEvent { event ->

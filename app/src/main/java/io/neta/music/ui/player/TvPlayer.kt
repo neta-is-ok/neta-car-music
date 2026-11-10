@@ -207,6 +207,7 @@ internal fun TvPlayer(
                     favorite = favorite,
                     sleep = sleep,
                     actions = actions,
+                    idle = idle,
                     playFocus = playFocus,
                     rowFocus = dockRow,
                     waveScale = waveScale,
@@ -315,6 +316,7 @@ private fun TvDock(
     favorite: Boolean,
     sleep: SleepTimerState,
     actions: MusicActions,
+    idle: IdleState,
     playFocus: FocusRequester,
     rowFocus: FocusRequester,
     waveScale: () -> Float,
@@ -369,6 +371,7 @@ private fun TvDock(
                 DockAction(Icons.Filled.GridView, "海报墙", actions::openPosterWall)
                 DockAction(Icons.Filled.SwapHoriz, "换音源", onOpenSource)
                 DockAction(Icons.Filled.AutoAwesome, "歌词动画", onOpenSheet)
+                LyricsSizeButton(actions, idle)
             }
         }
         // 时间放在进度条两侧而不是下方：两行的控制条已经比设计稿高，再多一行会压到封面下的音源胶囊

@@ -278,7 +278,7 @@ private fun PhoneTopBar(
             Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
                 SourcePill(song, sourceProvider, sourceDetail, playbackMode, onOpenSource)
             }
-            MoreMenu(song, deepLink, actions, onOpenSource, onLyricsMode)
+            MoreMenu(song, deepLink, actions, onOpenSource, onLyricsMode, idle)
         }
     }
 }
@@ -309,7 +309,7 @@ private fun PhoneShortTopBar(
             ToolbarLyricsButton(on = false, onToggle = onLyricsMode)
             ToolbarQueueButton(onOpenQueue)
             ToolbarSleepButton(sleep, onOpenTimer)
-            MoreMenu(song, deepLink, actions, onOpenSource, onLyricsMode)
+            MoreMenu(song, deepLink, actions, onOpenSource, onLyricsMode, idle)
         }
     }
 }
@@ -546,7 +546,7 @@ private fun PhoneControls(
                     ToolbarQueueButton(onOpenQueue)
                     ToolbarSleepButton(sleep, onOpenTimer)
                     ToolbarSourceButton(onOpenSource)
-                    MoreMenu(song, deepLink, actions, onOpenSource, onLyricsMode)
+                    MoreMenu(song, deepLink, actions, onOpenSource, onLyricsMode, idle)
                 }
             }
         }
@@ -657,6 +657,7 @@ private fun PhoneLyricsPage(
                         )
                     }
                     AnimationSheetButton(hint = !stage.prefs.hintSeen, onClick = stage.onOpenSheet)
+                    LyricsSizeButton(actions, idle)
                     FavoriteToggle(song, favorite, actions)
                 }
             },

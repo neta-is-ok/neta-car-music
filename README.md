@@ -18,7 +18,18 @@
 
 APK 输出到 `app/build/outputs/apk/debug/neta-car-music-0.0.4-4.apk`。SDK 与依赖版本以 `gradle/libs.versions.toml` 为准。
 
-Release 构建使用 `./gradlew :app:assembleRelease`，签名通过本地忽略的 `signing.properties` 或环境变量配置；密钥和密码不入库。开发约定见 [AGENTS.md](AGENTS.md)。
+正式签名包执行：
+
+```sh
+./gradlew :app:assembleRelease
+```
+
+配置仓库根目录的 `keystore.jks`、`signing.properties` 或对应签名环境变量后，Release 构建会完成签名并自动输出：
+
+- 英文发布包：`app/build/outputs/apk/release/neta-car-music-0.0.4-4.apk`
+- 中文名副本：`app/build/outputs/local-apk/release/吒友爱听-0.0.4-4.apk`
+
+两份 APK 的内容和签名相同，文件名随 `version.properties` 自动变化。中文名副本只在配置 Release 签名后生成，不影响原有 Debug 构建或英文发布包。密钥和密码不入库，开发约定见 [AGENTS.md](AGENTS.md)。
 
 ## 发布与更新
 

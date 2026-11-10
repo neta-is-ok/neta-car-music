@@ -1,3 +1,4 @@
+import com.android.build.api.artifact.SingleArtifact
 import java.io.FileInputStream
 import java.util.Properties
 
@@ -109,6 +110,21 @@ androidComponents {
     onVariants { variant ->
         variant.outputs.forEach { output ->
             output.outputFileName.set("neta-car-music-$appVersionName-$appVersionCode.apk")
+        }
+        if (variant.buildType == "release" && hasReleaseKeystore) {
+            // 直接复制已由 Release 配置签名的 APK，英文发布包及其元数据保持不变。
+            val exportLocalReleaseApk = tasks.register<Copy>("exportLocalReleaseApk") {
+                group = "build"
+                description = "导出中文文件名的正式签名 APK"
+                from(variant.artifacts.get(SingleArtifact.APK)) {
+                    include("neta-car-music-$appVersionName-$appVersionCode.apk")
+                    rename { "吒友爱听-$appVersionName-$appVersionCode.apk" }
+                }
+                into(layout.buildDirectory.dir("outputs/local-apk/release"))
+            }
+            tasks.matching { it.name == "assembleRelease" }.configureEach {
+                dependsOn(exportLocalReleaseApk)
+            }
         }
     }
 }

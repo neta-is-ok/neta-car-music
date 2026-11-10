@@ -232,14 +232,14 @@ private fun VersionRequirementCard(ai: Boolean, installation: NetamadeInstallati
             color = colors.content,
         )
         Text(
-            "需要哪吒美式 v5.2.9（versionCode 242）之后的稳定版，或 v5.2.9 的尝鲜版。",
+            "普通点歌与 MCP 一键绑定目前均需哪吒美式最新尝鲜版，当前稳定版暂不支持。",
             style = MaterialTheme.typography.bodyLarge,
             fontWeight = FontWeight.Medium,
             color = colors.content,
         )
         Text(
-            if (ai) "v5.2.9（versionCode 242）稳定版无法自动绑定，需要在美式中手动添加 MCP 服务器；已安装上述尝鲜版的用户可尝试一键绑定。"
-            else "v5.2.9（versionCode 242）稳定版不支持普通点歌，请先更新；已安装上述尝鲜版的用户可按下方方法开启。",
+            if (ai) "当前 v5.2.8（versionCode 241）稳定版需手动添加 MCP 服务器。v5.2.9（versionCode 242）稳定版发布后将支持一键绑定。"
+            else "当前 v5.2.8（versionCode 241）稳定版不支持普通点歌。v5.2.9（versionCode 242）稳定版发布后可升级使用。",
             style = MaterialTheme.typography.bodyMedium,
             color = colors.content,
         )

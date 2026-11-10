@@ -617,6 +617,7 @@ private fun PhoneLyricsPage(
                     textSp = PHONE_STAGE_SP,
                     insets = insets,
                     modifier = Modifier.fillMaxSize(),
+                    seek = actions::seek,
                 ) { modifier ->
                     LyricsList(
                         lyrics,

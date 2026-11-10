@@ -7,6 +7,7 @@ import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.net.Uri
 import androidx.media3.datasource.DataSpec
+import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.SimpleCache
@@ -39,6 +40,8 @@ class AutomixAnalyzer(
     private val context: Context,
     private val cache: SimpleCache?,
     private val store: AutomixAnalysisStore,
+    /** 包一层上游（本地歌的 WebDAV 副本要带认证），和播放器用同一套；为空就用默认工厂。 */
+    private val upstream: () -> DataSource.Factory = { DefaultDataSource.Factory(context) },
 ) {
     private val executor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "automix-analysis").apply { isDaemon = true }
@@ -99,10 +102,29 @@ class AutomixAnalyzer(
             source.copyTo(target, overwrite = true)
             return target.length()
         }
+        if (uri.scheme == "content") {
+            // 本地音乐：直接从文件读，不经过播放缓存（那边也不缓存本机文件）
+            return runCatching {
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    var total = 0L
+                    target.outputStream().use { output ->
+                        val buffer = ByteArray(64 * 1024)
+                        while (true) {
+                            val read = input.read(buffer)
+                            if (read < 0) break
+                            output.write(buffer, 0, read)
+                            total += read
+                            if (total > MAX_AUDIO_BYTES) return@use
+                        }
+                    }
+                    if (total > MAX_AUDIO_BYTES) 0L else total
+                } ?: 0L
+            }.getOrDefault(0L)
+        }
         val mediaCache = cache ?: return 0L
         val dataSource = CacheDataSource.Factory()
             .setCache(mediaCache)
-            .setUpstreamDataSourceFactory(DefaultDataSource.Factory(context))
+            .setUpstreamDataSourceFactory(upstream())
             .createDataSource()
         return try {
             dataSource.open(DataSpec(uri))

@@ -47,6 +47,7 @@ import androidx.compose.material.icons.filled.LibraryAdd
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.FindReplace
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AlertDialog
@@ -198,13 +199,19 @@ class MusicActions(private val model: MusicViewModel) {
     fun removeEntry(id: String, position: Int) = model.removePlaylistEntry(id, position)
     fun removeEntries(id: String, positions: List<Int>) = model.removePlaylistEntries(id, positions)
     fun moveEntry(id: String, position: Int, delta: Int) = model.movePlaylistEntry(id, position, delta)
-    fun searchLibrary(query: String) = model.searchLibrarySongs(query)
+    /** [providerId] 非空时在该平台里搜索（绑定歌单的“添加”用），否则用默认浏览来源。 */
+    fun searchLibrary(query: String, providerId: String? = null) = model.searchLibrarySongs(query, providerId)
     fun clearLibrarySearch() = model.clearLibrarySearch()
 
     /** 平台歌单绑定：同步该平台歌单 / 解除绑定。 */
     fun syncBoundPlaylist(id: String) = model.refreshBoundPlaylist(id, manual = true)
     fun refreshBoundPlaylist(id: String) = model.refreshBoundPlaylist(id)
     fun unbindPlaylist(id: String) = model.unbindPlaylist(id)
+    fun checkBoundPlaylistAccess(id: String) = model.checkBoundPlaylistAccess(id)
+
+    /** 绑定歌单的可写状态（按本地歌单 id），详情页据此显示只读 / 可修改。 */
+    val boundAccess: kotlinx.coroutines.flow.StateFlow<Map<String, BoundPlaylistAccess>>
+        get() = model.boundAccess
     fun playDownload(record: DownloadRecord) = model.playDownloaded(record)
     fun deleteDownload(record: DownloadRecord) = model.deleteDownload(record)
     fun restoreEntry(entry: io.neta.music.data.PlaylistEntryEntity) =
@@ -292,6 +299,8 @@ class MusicActions(private val model: MusicViewModel) {
     fun refreshAccountProfiles() = model.refreshAccountProfiles()
     fun syncBoundPlaylistsOnScreen() = model.refreshStaleBoundPlaylists()
     fun connectSync(providerId: String, token: String, remote: String) = model.connectSync(providerId, token, remote)
+    fun connectWebDav(account: io.neta.music.data.webdav.WebDavAccount) = model.connectWebDav(account)
+    fun testWebDav(account: io.neta.music.data.webdav.WebDavAccount?) = model.testWebDav(account)
     fun resolveInitial(strategy: SyncStrategy) = model.resolveInitialSync(strategy)
     fun cancelInitial() = model.cancelInitialSync()
     fun resolveConflict(id: String, strategy: SyncStrategy) = model.resolveSyncConflict(id, strategy)
@@ -588,6 +597,11 @@ fun TrackActionsSheet(
     onMerge: (() -> Unit)? = null,
     onWallLocate: (() -> Unit)? = null,
     onWallSettings: (() -> Unit)? = null,
+    /**
+     * 本地歌的「换一个匹配」。这台设备没有文件、正在用匹配到的平台版本播放时，这是唯一能改匹配的入口
+     * （歌曲信息只在本地音乐页里），选好的匹配记进线索表并同步回有文件的设备。非本地歌为 null。
+     */
+    onRematch: (() -> Unit)? = null,
 ) {
     var showPlaylists by remember { mutableStateOf(false) }
     io.neta.music.ui.components.AdaptiveSheet(
@@ -606,6 +620,7 @@ fun TrackActionsSheet(
                 }
                 Spacer(Modifier.height(12.dp))
                 val rows = listOfNotNull(
+                    onRematch?.let { SheetRow(Icons.Filled.FindReplace, "换一个匹配", false, it) },
                     onOpenSource?.let { SheetRow(Icons.Filled.SwapHoriz, "选择音源 / 查看其他版本", false, it) },
                     onMerge?.let { SheetRow(Icons.AutoMirrored.Filled.CallMerge, "合并到…", false, it) },
                     onRemoveFromPlaylist?.let { SheetRow(Icons.Filled.Delete, "从歌单移除", true, it) },

@@ -86,6 +86,7 @@ internal fun settingsOverview(
     equalizer: EqualizerUiState,
     cacheBytes: Long,
     downloadsBytes: Long,
+    localMusic: String = "",
 ): SettingsOverview {
     val appearance = state.appearance
     val eqLabel = EqPresets.byId(equalizer.presetId)?.label ?: "自定义"
@@ -121,6 +122,7 @@ internal fun settingsOverview(
             } else {
                 "未连接 · 本机优先"
             },
+            SettingsSection.LocalMusic to localMusic,
             SettingsSection.Storage to "缓存 ${formatBytes(cacheBytes)} · 下载 ${formatBytes(downloadsBytes)}",
             SettingsSection.About to if (updateAvailable) "$version · 发现新版本 ${info?.versionName.orEmpty()}（构建 ${info?.versionCode ?: 0}）" else version,
         ),
@@ -172,7 +174,7 @@ internal fun SettingsHomeScreen(
         ) {
             item(key = "groups", contentType = "settingsGroups") { SettingsGroups(overview, selected = null, twoPane = false, onOpen = onOpen) }
             item(key = "note", contentType = "note") {
-                SettingsNote("开启同步后，平台 Cookie 会写入私密同步文件；同步令牌只保存在本机，不会进入日志或同步文件。", Modifier.padding(top = 8.dp))
+                SettingsNote("开启同步后，平台 Cookie 会写入私密同步文件；同步令牌和 WebDAV 密码只保存在本机，不会进入日志或同步文件。", Modifier.padding(top = 8.dp))
             }
         }
     }

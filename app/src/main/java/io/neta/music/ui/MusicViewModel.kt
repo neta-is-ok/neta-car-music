@@ -16,10 +16,14 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.MediaSession
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
+import io.neta.music.data.local.LocalUploadRules
 import io.neta.music.AppLog
 import io.neta.music.ForegroundActivity
 import io.neta.music.MyMusicApp
 import io.neta.music.aggregate.AggregateSearchEngine
+import io.neta.music.aggregate.Attempt
+import io.neta.music.aggregate.Availability
+import io.neta.music.aggregate.MatchMethod
 import io.neta.music.aggregate.AggregationSettings
 import io.neta.music.aggregate.CanonicalCollection
 import io.neta.music.aggregate.CanonicalTrack
@@ -41,6 +45,9 @@ import io.neta.music.data.AppSettings
 import io.neta.music.data.CachedAccountProfile
 import io.neta.music.data.CanonicalSourceEntity
 import io.neta.music.data.CanonicalTrackEntity
+import io.neta.music.data.DOWNLOAD_ACTIVE
+import io.neta.music.data.DOWNLOAD_DONE
+import io.neta.music.data.DOWNLOAD_FAILED
 import io.neta.music.data.DownloadRecord
 import io.neta.music.data.ListenTaskState
 import io.neta.music.data.native.SodaApplyFreeVipResult
@@ -74,12 +81,18 @@ import io.neta.music.data.SavedSong
 import io.neta.music.data.SavedSongTombstone
 import io.neta.music.data.SearchKind
 import io.neta.music.data.Song
+import io.neta.music.data.local.LOCAL_SOURCE
+import io.neta.music.data.local.LocalLibrary
+import io.neta.music.data.local.LocalPlayable
+import io.neta.music.data.local.forStorage
 import io.neta.music.data.TopList
 import io.neta.music.data.TrackOverrideEntity
 import io.neta.music.data.native.AppleLyricsConfig
 import io.neta.music.data.native.KugouProvider
 import io.neta.music.data.native.NativeProviders
 import io.neta.music.data.native.NetEaseProvider
+import io.neta.music.data.native.PlaylistWriteException
+import io.neta.music.data.native.PlaylistWriteFailure
 import io.neta.music.data.sync.SyncStrategy
 import io.neta.music.data.update.InstallResult
 import io.neta.music.data.update.UpdatePhase
@@ -109,6 +122,7 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -276,6 +290,20 @@ data class MusicUiState(
             .associate { (index, id) -> id to index }
         return providers.filter(filter).sortedBy { order[it.id] ?: Int.MAX_VALUE }
     }
+}
+
+/**
+ * 绑定歌单在当前账号下能不能改。[supported] 为 false 表示平台没有写接口（仍按老行为编辑即解绑）；
+ * [writable] 为 null 表示还没判断出来，先按可写处理，真写失败时再提示。
+ */
+data class BoundPlaylistAccess(
+    val supported: Boolean = false,
+    val writable: Boolean? = null,
+    val reorder: Boolean = false,
+    val checking: Boolean = false,
+    val checkedAt: Long = 0L,
+) {
+    val readOnly: Boolean get() = supported && writable == false
 }
 
 /**
@@ -578,6 +606,21 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val coverSeeds = CoverSeedRepository(application, SingletonImageLoader.get(application))
 
     init {
+        val downloadsAtStart = System.currentTimeMillis()
+        viewModelScope.launch(Dispatchers.IO) {
+            // 「下载中」只活在当前进程：上次进程被杀留下的记录永远等不到「已完成」，
+            // 启动时连同半截文件一起清掉。只清本进程创建之前留下的，避免误删刚点的下载。
+            runCatching {
+                val dao = app.database.dao()
+                dao.downloads().first()
+                    .filter { it.state == DOWNLOAD_ACTIVE && it.updatedAt < downloadsAtStart }
+                    .forEach { record ->
+                        File(record.path).delete()
+                        File("${record.path}.part").delete()
+                        dao.deleteDownload(record.key)
+                    }
+            }
+        }
         viewModelScope.launch {
             // 等磁盘上真正那一帧设置：失败也要放行，不能把界面关在门外
             runCatching { app.settings.state.first() }
@@ -605,6 +648,28 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                         refreshAccountProfile(id, cookie)
                     }
                 }
+            }
+        }
+        viewModelScope.launch {
+            // 正在放本地歌时改了“同名 .lrc 优先”或换了匹配：同一首歌重新取一次歌词，不用等下次播放
+            val library = app.localLibrary
+            var last: Pair<String, String>? = null
+            combine(
+                base.map { song -> song.current?.takeIf { it.source == LOCAL_SOURCE }?.id }.distinctUntilChanged(),
+                library.index,
+                library.prefs,
+            ) { id, index, prefs ->
+                id?.let { localId ->
+                    val row = index.byId[localId]?.row
+                    // 没有文件的设备上匹配是同步来的（或在这台设备上换的），也要跟着重取
+                    val match = index.matchOf(localId)
+                    localId to "${prefs.preferLrc}|${match?.source}:${match?.id}|${row?.lrcUri}"
+                }
+            }.distinctUntilChanged().collect { now ->
+                val before = last
+                last = now
+                if (now == null || before == null || before.first != now.first || before.second == now.second) return@collect
+                base.value.current?.takeIf { it.source == LOCAL_SOURCE && it.id == now.first }?.let { loadLyrics(it) }
             }
         }
         viewModelScope.launch {
@@ -1925,7 +1990,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     fun deletePlaylist(id: String) {
         viewModelScope.launch {
+            cancelPendingReorder(id)
             libraryDao.softDelete(id, System.currentTimeMillis())
+            _boundAccess.update { it - id }
             app.sync.onLocalChange()
             message("已删除歌单，可从云端恢复前先在本机保留墓碑")
         }
@@ -1934,59 +2001,202 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     // 歌单增删移的位置都是读出再写回，快速连点或撤销时要串行，否则会按过期的位置改错歌
     private val playlistMutex = Mutex()
 
+    /** 绑定歌单的可写状态（按本地歌单 id）；详情页打开时查一次，结果缓存在进程里。 */
+    private val _boundAccess = MutableStateFlow<Map<String, BoundPlaylistAccess>>(emptyMap())
+    val boundAccess: StateFlow<Map<String, BoundPlaylistAccess>> = _boundAccess.asStateFlow()
+
+    /** 排序防抖：连续上下移只把最后一次完整顺序推给平台。 */
+    private val reorderJobs = ConcurrentHashMap<String, Job>()
+
+    /** 本轮排序开始前的条目快照，排序推送失败时回滚到这里。 */
+    private val reorderRollback = ConcurrentHashMap<String, PlaylistSnapshot>()
+
+    private data class PlaylistSnapshot(
+        val playlist: PlaylistEntity,
+        val entries: List<PlaylistEntryEntity>,
+    )
+
     private fun launchPlaylistEdit(block: suspend CoroutineScope.() -> Unit) =
         viewModelScope.launch { playlistMutex.withLock { block() } }
 
-    fun addSongToPlaylist(playlistId: String, song: Song) {
-        launchPlaylistEdit {
-            val playlist = libraryDao.playlistOnce(playlistId) ?: return@launchPlaylistEdit
-            if (playlist.deletedAt != null) return@launchPlaylistEdit
-            unbindIfBound(playlistId)
-            val entries = libraryDao.entriesOnce(playlistId)
-            if (entries.any { it.songKey == song.key }) {
-                message("这首歌已经在「${playlist.name}」里")
-                return@launchPlaylistEdit
+    /** 打开绑定歌单时调用：判断平台是否可写、是不是当前账号自己的歌单。 */
+    fun checkBoundPlaylistAccess(id: String, force: Boolean = false) {
+        viewModelScope.launch {
+            val playlist = libraryDao.playlistOnce(id) ?: return@launch
+            if (!playlist.bound) {
+                _boundAccess.update { it - id }
+                return@launch
             }
             val now = System.currentTimeMillis()
-            libraryDao.replaceEntries(
-                playlistId,
-                entries + PlaylistEntryEntity(
-                    playlistId = playlistId,
-                    position = entries.size,
-                    songKey = song.key,
-                    payload = json.encodeToString(song),
-                ),
-            )
-            libraryDao.markDirty(playlistId, now)
-            app.sync.onLocalChange()
-            message("已加入「${playlist.name}」")
+            val cached = _boundAccess.value[id]
+            if (!force && cached != null && !cached.checking && now - cached.checkedAt < 10 * 60_000L) return@launch
+            val info = app.repository.providerInfo(playlist.linkProvider)
+            if (info == null || !info.playlistWrite) {
+                _boundAccess.update {
+                    it + (id to BoundPlaylistAccess(supported = false, checkedAt = now))
+                }
+                return@launch
+            }
+            _boundAccess.update {
+                it + (
+                    id to BoundPlaylistAccess(
+                        supported = true,
+                        checking = true,
+                        reorder = info.playlistReorder,
+                        checkedAt = now,
+                    )
+                )
+            }
+            val writable = try {
+                app.repository.playlistWritable(
+                    playlist.linkProvider,
+                    cookieFor(playlist.linkProvider),
+                    playlist.linkId,
+                )
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                null
+            }
+            _boundAccess.update {
+                it + (
+                    id to BoundPlaylistAccess(
+                        supported = true,
+                        writable = writable ?: true,
+                        reorder = info.playlistReorder,
+                        checkedAt = now,
+                    )
+                )
+            }
         }
     }
 
-    /** 批量加入现有歌单：按 songKey 去重，提示新增与已存在的数量。 */
+    private fun playlistAccess(id: String): BoundPlaylistAccess? = _boundAccess.value[id]
+
+    private fun platformSupportsReorder(playlist: PlaylistEntity): Boolean =
+        app.repository.providerInfo(playlist.linkProvider)?.playlistReorder == true
+
+    private enum class PlaylistWriteMode { Local, Platform, Unknown }
+
+    /**
+     * 编辑绑定歌单时走哪条路。[Unknown] 是绑定信息指向一个不存在的平台（数据坏了或平台被移除），
+     * 这种情况不能再按老逻辑静默解绑，否则用户会莫名其妙丢绑定。
+     */
+    private fun playlistWriteMode(playlist: PlaylistEntity): PlaylistWriteMode {
+        if (!playlist.bound) return PlaylistWriteMode.Local
+        val info = app.repository.providerInfo(playlist.linkProvider)
+        val mode = when {
+            info == null -> PlaylistWriteMode.Unknown
+            info.playlistWrite -> PlaylistWriteMode.Platform
+            else -> PlaylistWriteMode.Local
+        }
+        AppLog.d(
+            "PlaylistWrite",
+            "mode=$mode playlist=${playlist.id} provider=${playlist.linkProvider} link=${playlist.linkId} " +
+                "write=${info?.playlistWrite} reorder=${info?.playlistReorder}",
+        )
+        return mode
+    }
+
+    fun addSongToPlaylist(playlistId: String, song: Song) =
+        addSongsToPlaylist(playlistId, listOf(song))
+
+    /**
+     * 批量加入现有歌单。绑定且平台可写时先解析成平台曲目并写平台，成功后才算数；
+     * 平台没有写接口（或者没绑定）时维持原来的“编辑即解绑”。
+     */
     fun addSongsToPlaylist(playlistId: String, songs: List<Song>) {
         if (songs.isEmpty()) return
         launchPlaylistEdit {
             val playlist = libraryDao.playlistOnce(playlistId) ?: return@launchPlaylistEdit
             if (playlist.deletedAt != null) return@launchPlaylistEdit
-            unbindIfBound(playlistId)
-            val entries = libraryDao.entriesOnce(playlistId)
-            val candidates = songs.distinctBy { it.key }.filter { song -> entries.none { it.songKey == song.key } }
-            if (candidates.isEmpty()) {
-                message("所选歌曲都已经在「${playlist.name}」里")
+            when (playlistWriteMode(playlist)) {
+                PlaylistWriteMode.Local -> {
+                    addSongsToLocalPlaylist(playlist, songs)
+                    return@launchPlaylistEdit
+                }
+                PlaylistWriteMode.Unknown -> {
+                    message("无法识别绑定的平台：${playlist.linkProvider}", error = true)
+                    return@launchPlaylistEdit
+                }
+                PlaylistWriteMode.Platform -> Unit
+            }
+            if (playlistAccess(playlistId)?.writable == false) {
+                message("这是收藏的歌单，不能修改", error = true)
                 return@launchPlaylistEdit
             }
-            libraryDao.replaceEntries(
+            if (!flushPendingReorder(playlistId)) return@launchPlaylistEdit
+            val entries = libraryDao.entriesOnce(playlistId)
+            val distinct = songs.distinctBy { it.key }
+            val candidates = distinct.filter { song -> entries.none { it.songKey == song.key } }
+            if (candidates.isEmpty()) {
+                message(
+                    if (distinct.size == 1) "这首歌已经在「${playlist.name}」里"
+                    else "所选歌曲都已经在「${playlist.name}」里"
+                )
+                return@launchPlaylistEdit
+            }
+            val provider = playlist.linkProvider
+            val cookie = cookieFor(provider)
+            val resolved = mutableListOf<Song>()
+            for (song in candidates) {
+                val target = resolveForPlaylistWrite(song, provider, cookie) ?: continue
+                if (entries.any { it.songKey == target.key } || resolved.any { it.key == target.key }) continue
+                resolved += target
+            }
+            if (resolved.isEmpty()) {
+                message("这些歌在${providerLabel(provider)}里都没找到", error = true)
+                return@launchPlaylistEdit
+            }
+            val snapshot = PlaylistSnapshot(playlist, entries)
+            writeEntries(
                 playlistId,
-                entries + candidates.mapIndexed { index, song ->
-                    PlaylistEntryEntity(playlistId, entries.size + index, song.key, json.encodeToString(song))
-                },
+                entries + resolved.mapIndexed { index, song -> entryOf(playlistId, entries.size + index, song) },
             )
-            libraryDao.markDirty(playlistId, System.currentTimeMillis())
-            app.sync.onLocalChange()
-            val skipped = songs.size - candidates.size
-            message(if (skipped > 0) "已加入 ${candidates.size} 首，$skipped 首已存在" else "已把 ${candidates.size} 首加入「${playlist.name}」")
+            AppLog.i("PlaylistWrite", "add start provider=$provider link=${playlist.linkId} songs=${resolved.size}")
+            try {
+                app.repository.addPlaylistTracks(provider, cookie, playlist.linkId, resolved)
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                AppLog.w("PlaylistWrite", "add failed provider=$provider link=${playlist.linkId}: ${error.message}")
+                restoreSnapshot(snapshot)
+                message(writeErrorMessage(playlist, "添加", error), error = true)
+                return@launchPlaylistEdit
+            }
+            AppLog.i("PlaylistWrite", "add ok provider=$provider link=${playlist.linkId} songs=${resolved.size}")
+            commitBoundWrite(playlistId)
+            scheduleBoundReload(playlistId)
+            val skipped = songs.size - resolved.size
+            val text = buildString {
+                append("已加入 ${resolved.size} 首到「${playlist.name}」")
+                if (skipped > 0) append("，$skipped 首没找到或已存在")
+            }
+            addedMessage(text, resolved)
         }
+    }
+
+    private suspend fun addSongsToLocalPlaylist(playlist: PlaylistEntity, songs: List<Song>) {
+        unbindIfBound(playlist.id)
+        val entries = libraryDao.entriesOnce(playlist.id)
+        val candidates = songs.distinctBy { it.key }.filter { song -> entries.none { it.songKey == song.key } }
+        if (candidates.isEmpty()) {
+            message(
+                if (songs.distinctBy { it.key }.size == 1) "这首歌已经在「${playlist.name}」里"
+                else "所选歌曲都已经在「${playlist.name}」里"
+            )
+            return
+        }
+        libraryDao.replaceEntries(
+            playlist.id,
+            entries + candidates.mapIndexed { index, song -> entryOf(playlist.id, entries.size + index, song) },
+        )
+        libraryDao.markDirty(playlist.id, System.currentTimeMillis())
+        app.sync.onLocalChange()
+        val skipped = songs.size - candidates.size
+        addedMessage(
+            if (skipped > 0) "已加入 ${candidates.size} 首，$skipped 首已存在" else "已把 ${candidates.size} 首加入「${playlist.name}」",
+            candidates,
+        )
     }
 
     /** 批量导入到新建歌单（歌单链接导入、多选“新建歌单”都走这里）。 */
@@ -2002,11 +2212,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             libraryDao.replaceEntries(
                 id,
                 songs.distinctBy { it.key }.mapIndexed { index, song ->
-                    PlaylistEntryEntity(id, index, song.key, json.encodeToString(song))
+                    PlaylistEntryEntity(id, index, song.key, json.encodeToString(song.forStorage()))
                 },
             )
             app.sync.onLocalChange()
-            message("已创建歌单「$value」，加入 ${songs.size} 首")
+            addedMessage("已创建歌单「$value」，加入 ${songs.size} 首", songs.distinctBy { it.key })
         }
     }
 
@@ -2014,47 +2224,122 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun removePlaylistEntries(playlistId: String, positions: List<Int>) {
         if (positions.isEmpty()) return
         launchPlaylistEdit {
-            unbindIfBound(playlistId)
-            val doomed = positions.toHashSet()
+            val playlist = libraryDao.playlistOnce(playlistId) ?: return@launchPlaylistEdit
             val entries = libraryDao.entriesOnce(playlistId)
-            libraryDao.replaceEntries(
-                playlistId,
-                entries.filterNot { it.position in doomed }
-                    .withIndex()
-                    .map { (index, entry) -> entry.copy(position = index) },
-            )
-            libraryDao.markDirty(playlistId, System.currentTimeMillis())
-            app.sync.onLocalChange()
+            val doomed = positions.toHashSet()
+            val doomedEntries = entries.filter { it.position in doomed }
+            if (doomedEntries.isEmpty()) return@launchPlaylistEdit
+            when (playlistWriteMode(playlist)) {
+                PlaylistWriteMode.Local -> {
+                    removeEntriesLocally(playlistId, doomed)
+                    return@launchPlaylistEdit
+                }
+                PlaylistWriteMode.Unknown -> {
+                    message("无法识别绑定的平台：${playlist.linkProvider}", error = true)
+                    return@launchPlaylistEdit
+                }
+                PlaylistWriteMode.Platform -> Unit
+            }
+            if (playlistAccess(playlistId)?.writable == false) {
+                message("这是收藏的歌单，不能修改", error = true)
+                return@launchPlaylistEdit
+            }
+            if (!flushPendingReorder(playlistId)) return@launchPlaylistEdit
+            val snapshot = PlaylistSnapshot(playlist, entries)
+            val kept = entries.filterNot { it.position in doomed }
+                .withIndex()
+                .map { (index, entry) -> entry.copy(position = index) }
+            writeEntries(playlistId, kept)
+            val platformSongs = doomedEntries.mapNotNull(::decodeEntrySong)
+                .filter { it.source == playlist.linkProvider }
+            if (platformSongs.isNotEmpty()) {
+                AppLog.i(
+                    "PlaylistWrite",
+                    "remove start provider=${playlist.linkProvider} link=${playlist.linkId} songs=${platformSongs.size}",
+                )
+                try {
+                    app.repository.removePlaylistTracks(
+                        playlist.linkProvider,
+                        cookieFor(playlist.linkProvider),
+                        playlist.linkId,
+                        platformSongs,
+                    )
+                } catch (error: Exception) {
+                    if (error is CancellationException) throw error
+                    AppLog.w(
+                        "PlaylistWrite",
+                        "remove failed provider=${playlist.linkProvider} link=${playlist.linkId}: ${error.message}",
+                    )
+                    restoreSnapshot(snapshot)
+                    message(writeErrorMessage(playlist, "移除", error), error = true)
+                    return@launchPlaylistEdit
+                }
+                AppLog.i("PlaylistWrite", "remove ok provider=${playlist.linkProvider} link=${playlist.linkId}")
+            }
+            commitBoundWrite(playlistId)
+            scheduleBoundReload(playlistId)
         }
     }
 
-    fun removePlaylistEntry(playlistId: String, position: Int) {
-        launchPlaylistEdit {
-            unbindIfBound(playlistId)
-            val entries = libraryDao.entriesOnce(playlistId).filterNot { it.position == position }
-            libraryDao.replaceEntries(playlistId, entries.withIndex().map { (index, entry) -> entry.copy(position = index) })
-            libraryDao.markDirty(playlistId, System.currentTimeMillis())
-            app.sync.onLocalChange()
-        }
+    fun removePlaylistEntry(playlistId: String, position: Int) =
+        removePlaylistEntries(playlistId, listOf(position))
+
+    private suspend fun removeEntriesLocally(playlistId: String, positions: Set<Int>) {
+        unbindIfBound(playlistId)
+        val entries = libraryDao.entriesOnce(playlistId)
+        libraryDao.replaceEntries(
+            playlistId,
+            entries.filterNot { it.position in positions }
+                .withIndex()
+                .map { (index, entry) -> entry.copy(position = index) },
+        )
+        libraryDao.markDirty(playlistId, System.currentTimeMillis())
+        app.sync.onLocalChange()
     }
 
     fun movePlaylistEntry(playlistId: String, position: Int, delta: Int) {
         launchPlaylistEdit {
-            unbindIfBound(playlistId)
-            val entries = libraryDao.entriesOnce(playlistId).toMutableList()
-            val index = entries.indexOfFirst { it.position == position }
+            val playlist = libraryDao.playlistOnce(playlistId) ?: return@launchPlaylistEdit
+            val source = libraryDao.entriesOnce(playlistId).toMutableList()
+            val index = source.indexOfFirst { it.position == position }
             if (index < 0) return@launchPlaylistEdit
-            val target = (index + delta).coerceIn(0, entries.lastIndex)
+            val target = (index + delta).coerceIn(0, source.lastIndex)
             if (target == index) return@launchPlaylistEdit
+            val entries = source.toMutableList()
             val item = entries.removeAt(index)
             entries.add(target, item)
+            when (playlistWriteMode(playlist)) {
+                PlaylistWriteMode.Local -> {
+                    unbindIfBound(playlistId)
+                    libraryDao.replaceEntries(playlistId, entries.withIndex().map { (i, entry) -> entry.copy(position = i) })
+                    libraryDao.markDirty(playlistId, System.currentTimeMillis())
+                    app.sync.onLocalChange()
+                    return@launchPlaylistEdit
+                }
+                PlaylistWriteMode.Unknown -> {
+                    message("无法识别绑定的平台：${playlist.linkProvider}", error = true)
+                    return@launchPlaylistEdit
+                }
+                PlaylistWriteMode.Platform -> Unit
+            }
+            if (playlistAccess(playlistId)?.writable == false) {
+                message("这是收藏的歌单，不能修改", error = true)
+                return@launchPlaylistEdit
+            }
+            if (!platformSupportsReorder(playlist)) {
+                message("${providerLabel(playlist.linkProvider)}不支持调整歌单顺序", error = true)
+                return@launchPlaylistEdit
+            }
+            if (reorderRollback[playlistId] == null) {
+                reorderRollback[playlistId] = PlaylistSnapshot(playlist, source)
+            }
             libraryDao.replaceEntries(playlistId, entries.withIndex().map { (i, entry) -> entry.copy(position = i) })
             libraryDao.markDirty(playlistId, System.currentTimeMillis())
-            app.sync.onLocalChange()
+            scheduleReorderPush(playlistId)
         }
     }
 
-    fun searchLibrarySongs(query: String) {
+    fun searchLibrarySongs(query: String, providerId: String? = null) {
         val value = query.trim()
         if (value.isBlank()) {
             _librarySearch.value = LibrarySearchUiState()
@@ -2063,7 +2348,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         val generation = ++librarySearchGeneration
         _librarySearch.value = LibrarySearchUiState(query = value, loading = true)
         viewModelScope.launch {
-            val providerId = settingsState.value.provider
+            val providerId = providerId?.takeIf { it.isNotBlank() } ?: settingsState.value.provider
             val result = runCatching { app.repository.searchSongs(providerId, cookieFor(providerId), value) }
             if (generation != librarySearchGeneration) return@launch
             _librarySearch.value = LibrarySearchUiState(
@@ -2080,18 +2365,246 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         _librarySearch.value = LibrarySearchUiState()
     }
 
-    /** 撤销“移出歌单”：把原条目插回原位置。 */
+    /** 撤销“移出歌单”：把原条目插回原位置。绑定歌单会反向写平台，能排序的平台再恢复位置。 */
     fun insertPlaylistEntry(playlistId: String, position: Int, songKey: String, payload: String) {
         launchPlaylistEdit {
-            unbindIfBound(playlistId)
-            val entries = libraryDao.entriesOnce(playlistId).toMutableList()
+            val playlist = libraryDao.playlistOnce(playlistId) ?: return@launchPlaylistEdit
+            val entries = libraryDao.entriesOnce(playlistId)
             if (entries.any { it.songKey == songKey }) return@launchPlaylistEdit
+            when (playlistWriteMode(playlist)) {
+                PlaylistWriteMode.Local -> {
+                    insertEntryLocally(playlistId, position, songKey, payload)
+                    return@launchPlaylistEdit
+                }
+                PlaylistWriteMode.Unknown -> {
+                    message("无法识别绑定的平台：${playlist.linkProvider}", error = true)
+                    return@launchPlaylistEdit
+                }
+                PlaylistWriteMode.Platform -> Unit
+            }
+            if (playlistAccess(playlistId)?.writable == false) {
+                message("这是收藏的歌单，不能修改", error = true)
+                return@launchPlaylistEdit
+            }
+            if (!flushPendingReorder(playlistId)) return@launchPlaylistEdit
+            val original = decodeEntrySong(PlaylistEntryEntity(playlistId, position, songKey, payload))
+                ?: return@launchPlaylistEdit
+            val target = resolveForPlaylistWrite(original, playlist.linkProvider, cookieFor(playlist.linkProvider))
+                ?: run {
+                    message("这首歌在${providerLabel(playlist.linkProvider)}里找不到", error = true)
+                    return@launchPlaylistEdit
+                }
+            if (entries.any { it.songKey == target.key }) {
+                message("这首歌已经在「${playlist.name}」里")
+                return@launchPlaylistEdit
+            }
             val index = position.coerceIn(0, entries.size)
-            entries.add(index, PlaylistEntryEntity(playlistId, index, songKey, payload))
-            libraryDao.replaceEntries(playlistId, entries.withIndex().map { (i, entry) -> entry.copy(position = i) })
-            libraryDao.markDirty(playlistId, System.currentTimeMillis())
-            app.sync.onLocalChange()
+            val updated = entries.toMutableList()
+            updated.add(index, entryOf(playlistId, index, target))
+            val snapshot = PlaylistSnapshot(playlist, entries)
+            writeEntries(playlistId, updated.withIndex().map { (i, entry) -> entry.copy(position = i) })
+            try {
+                app.repository.addPlaylistTracks(
+                    playlist.linkProvider,
+                    cookieFor(playlist.linkProvider),
+                    playlist.linkId,
+                    listOf(target),
+                )
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                restoreSnapshot(snapshot)
+                message(writeErrorMessage(playlist, "撤销", error), error = true)
+                return@launchPlaylistEdit
+            }
+            if (platformSupportsReorder(playlist)) {
+                val all = libraryDao.entriesOnce(playlistId).mapNotNull(::decodeEntrySong)
+                    .filter { it.source == playlist.linkProvider }
+                if (all.size >= 2) {
+                    runCatching {
+                        app.repository.reorderPlaylistTracks(
+                            playlist.linkProvider,
+                            cookieFor(playlist.linkProvider),
+                            playlist.linkId,
+                            all,
+                        )
+                    }.onFailure {
+                        if (it is CancellationException) throw it
+                        message("已加回，但顺序没能同步到平台", error = true)
+                    }
+                }
+            }
+            commitBoundWrite(playlistId)
+            scheduleBoundReload(playlistId)
         }
+    }
+
+    private suspend fun insertEntryLocally(playlistId: String, position: Int, songKey: String, payload: String) {
+        unbindIfBound(playlistId)
+        val entries = libraryDao.entriesOnce(playlistId).toMutableList()
+        if (entries.any { it.songKey == songKey }) return
+        val index = position.coerceIn(0, entries.size)
+        entries.add(index, PlaylistEntryEntity(playlistId, index, songKey, payload))
+        libraryDao.replaceEntries(playlistId, entries.withIndex().map { (i, entry) -> entry.copy(position = i) })
+        libraryDao.markDirty(playlistId, System.currentTimeMillis())
+        app.sync.onLocalChange()
+    }
+
+    // ---------- 绑定歌单写回平台 ----------
+
+    private fun entryOf(playlistId: String, position: Int, song: Song) = PlaylistEntryEntity(
+        playlistId = playlistId,
+        position = position,
+        songKey = song.key,
+        payload = json.encodeToString(song.forStorage()),
+    )
+
+    private fun decodeEntrySong(entry: PlaylistEntryEntity): Song? =
+        runCatching { json.decodeFromString<Song>(entry.payload) }.getOrNull()
+
+    private fun providerLabel(providerId: String): String =
+        app.repository.providerInfo(providerId)?.name ?: providerId
+
+    /** 把任意来源的歌曲解析成目标平台的曲目：同源直接过，其次查已合并的音源，最后严格搜索匹配。 */
+    private suspend fun resolveForPlaylistWrite(song: Song, providerId: String, cookie: String): Song? {
+        if (song.source == providerId) return song
+        runCatching {
+            val canonical = app.database.aggregate().source(song.key) ?: return@runCatching null
+            app.database.aggregate().sources(canonical.canonicalId)
+                .firstOrNull { it.providerId == providerId }
+                ?.let { json.decodeFromString<Song>(it.payload) }
+        }.getOrNull()?.let { return it }
+        val keyword = listOf(song.name, song.artist).filter { it.isNotBlank() }.joinToString(" ")
+        if (keyword.isBlank()) return null
+        val candidates = try {
+            app.repository.searchSongs(providerId, cookie, keyword)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            emptyList()
+        }
+        return TrackMatcher.bestMatch(song, providerId, candidates, 0.92f).song
+    }
+
+    private fun writeErrorMessage(playlist: PlaylistEntity, action: String, error: Throwable): String {
+        val name = providerLabel(playlist.linkProvider)
+        return when ((error as? PlaylistWriteException)?.failure) {
+            PlaylistWriteFailure.NotLoggedIn -> "请先登录${name}再修改歌单"
+            PlaylistWriteFailure.NotOwner -> "这是收藏的歌单，不能修改"
+            PlaylistWriteFailure.SongNotFound -> "这首歌在${name}里找不到"
+            PlaylistWriteFailure.Unsupported -> "${name}暂不支持${action}歌单"
+            else -> "${action}失败：${error.message?.takeIf { it.isNotBlank() } ?: "平台没有响应"}"
+        }
+    }
+
+    private suspend fun writeEntries(playlistId: String, entries: List<PlaylistEntryEntity>) {
+        libraryDao.replaceEntries(playlistId, entries)
+        libraryDao.markDirty(playlistId, System.currentTimeMillis())
+    }
+
+    private suspend fun restoreSnapshot(snapshot: PlaylistSnapshot) {
+        libraryDao.replaceEntries(snapshot.playlist.id, snapshot.entries)
+        libraryDao.putPlaylist(snapshot.playlist)
+        // 写平台前本地已经改过；回滚后让同步看到恢复后的内容，避免云端留着失败的那次修改
+        app.sync.onLocalChange()
+    }
+
+    /** 平台写成功后把绑定时间推到当前；不改动已经写好的本地条目。 */
+    private suspend fun commitBoundWrite(playlistId: String) {
+        val latest = libraryDao.playlistOnce(playlistId) ?: return
+        val now = System.currentTimeMillis()
+        libraryDao.putPlaylist(latest.copy(linkSyncedAt = now, updatedAt = now, dirty = true))
+        app.sync.onLocalChange()
+    }
+
+    /** 写完后过几秒静默回读一次，平台对顺序/去重的处理以平台为准；失败就保留本地内容。 */
+    private fun scheduleBoundReload(playlistId: String) {
+        viewModelScope.launch {
+            delay(2_500)
+            refreshBoundPlaylist(playlistId, force = true)
+        }
+    }
+
+    private fun cancelPendingReorder(playlistId: String) {
+        reorderJobs.remove(playlistId)?.cancel()
+        reorderRollback.remove(playlistId)
+    }
+
+    private fun scheduleReorderPush(playlistId: String) {
+        reorderJobs.remove(playlistId)?.cancel()
+        reorderJobs[playlistId] = viewModelScope.launch {
+            delay(500)
+            launchPlaylistEdit { pushReorder(playlistId) }
+        }
+    }
+
+    /** 有未推送的排序时先推完，再做增删或撤销，避免平台顺序被旧快照覆盖。 */
+    private suspend fun flushPendingReorder(playlistId: String): Boolean {
+        val job = reorderJobs.remove(playlistId) ?: return true
+        job.cancel()
+        return pushReorder(playlistId)
+    }
+
+    /** 把本地当前顺序整表写回平台；失败时恢复这轮排序开始前的条目。 */
+    private suspend fun pushReorder(playlistId: String): Boolean {
+        val snapshot = reorderRollback[playlistId] ?: return true
+        val playlist = libraryDao.playlistOnce(playlistId)
+        if (playlist == null || playlist.deletedAt != null || !playlist.bound) {
+            reorderRollback.remove(playlistId)
+            reorderJobs.remove(playlistId)
+            return true
+        }
+        val entries = libraryDao.entriesOnce(playlistId)
+        // 只把平台认识的曲目按相对顺序写回去；本地特有的旧条目留在本机，不影响平台排序
+        val songs = entries.mapNotNull(::decodeEntrySong)
+            .filter { it.source == playlist.linkProvider }
+        if (songs.size < 2) {
+            reorderRollback.remove(playlistId)
+            reorderJobs.remove(playlistId)
+            return true
+        }
+        // QQ 的 SeqSonglist 要求提交全量顺序，提交不全会打乱未提交的歌曲；酷狗同理。
+        // 本地集合和平台不一致（另一台设备刚改过）时先不写，让用户手动同步。
+        val platformSongs = try {
+            app.repository.playlistSongs(
+                playlist.linkProvider,
+                cookieFor(playlist.linkProvider),
+                playlist.linkId,
+            )
+        } catch (error: Exception) {
+            if (error is CancellationException) throw error
+            restoreSnapshot(snapshot)
+            reorderRollback.remove(playlistId)
+            reorderJobs.remove(playlistId)
+            message(writeErrorMessage(playlist, "调整顺序", error), error = true)
+            return false
+        }
+        if (platformSongs.map { it.key }.toSet() != entries.map { it.songKey }.toSet()) {
+            restoreSnapshot(snapshot)
+            reorderRollback.remove(playlistId)
+            reorderJobs.remove(playlistId)
+            message("歌单已在其他设备变化，请先同步再调整顺序", error = true)
+            return false
+        }
+        try {
+            app.repository.reorderPlaylistTracks(
+                playlist.linkProvider,
+                cookieFor(playlist.linkProvider),
+                playlist.linkId,
+                songs,
+            )
+        } catch (error: Exception) {
+            if (error is CancellationException) throw error
+            restoreSnapshot(snapshot)
+            reorderRollback.remove(playlistId)
+            reorderJobs.remove(playlistId)
+            message(writeErrorMessage(playlist, "调整顺序", error), error = true)
+            return false
+        }
+        reorderRollback.remove(playlistId)
+        reorderJobs.remove(playlistId)
+        commitBoundWrite(playlistId)
+        scheduleBoundReload(playlistId)
+        return true
     }
 
     fun clearPlayHistory() = viewModelScope.launch {
@@ -2119,7 +2632,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             libraryDao.replaceEntries(
                 id,
                 songs.mapIndexed { index, song ->
-                    PlaylistEntryEntity(id, index, song.key, json.encodeToString(song))
+                    PlaylistEntryEntity(id, index, song.key, json.encodeToString(song.forStorage()))
                 },
             )
             app.sync.onLocalChange()
@@ -2160,10 +2673,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 libraryDao.replaceEntries(
                     id,
                     songs.distinctBy { it.key }.mapIndexed { index, song ->
-                        PlaylistEntryEntity(id, index, song.key, json.encodeToString(song))
+                        PlaylistEntryEntity(id, index, song.key, json.encodeToString(song.forStorage()))
                     },
                 )
                 app.sync.onLocalChange()
+                _boundAccess.update { it - id }
                 message("已绑定「$trimmed」，平台更新会自动同步")
             } else {
                 libraryDao.putPlaylist(
@@ -2182,6 +2696,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 )
                 libraryDao.markDirty(target.id, now)
                 app.sync.onLocalChange()
+                _boundAccess.update { it - target.id }
                 message("已绑定「${target.name}」，共 ${songs.size} 首")
             }
         }
@@ -2191,7 +2706,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
      * 从平台刷新一个绑定歌单。[manual] 为 false 时按 [boundRefreshIntervalMs] 节流、失败静默
      * （下次打开会再试）；手动同步总是执行并给出结果提示。
      */
-    fun refreshBoundPlaylist(id: String, manual: Boolean = false) {
+    fun refreshBoundPlaylist(id: String, manual: Boolean = false, force: Boolean = false) {
         launchPlaylistEdit {
             val playlist = libraryDao.playlistOnce(id) ?: return@launchPlaylistEdit
             if (playlist.deletedAt != null || !playlist.bound) {
@@ -2199,7 +2714,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 return@launchPlaylistEdit
             }
             val now = System.currentTimeMillis()
-            if (!manual && now - playlist.linkSyncedAt < boundRefreshIntervalMs) return@launchPlaylistEdit
+            if (!manual && !force && now - playlist.linkSyncedAt < boundRefreshIntervalMs) return@launchPlaylistEdit
+            // 有排序还没推给平台时不要用平台内容把本地顺序盖回去；手动同步先把排序推完
+            if (manual) {
+                if (!flushPendingReorder(id)) return@launchPlaylistEdit
+            } else if (reorderJobs[id] != null) {
+                return@launchPlaylistEdit
+            }
             val songs = runCatching {
                 app.repository.playlistSongs(playlist.linkProvider, cookieFor(playlist.linkProvider), playlist.linkId)
             }.getOrElse {
@@ -2215,12 +2736,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             // 别把拉取前的那一整行盖回去（解除绑定会被写活、改名会被改回去）
             val latest = libraryDao.playlistOnce(id) ?: return@launchPlaylistEdit
             if (latest.deletedAt != null) return@launchPlaylistEdit
+            // 拉取期间被解绑或换绑（包括同步带来的“另一台设备编辑过”）：不能再拿平台内容盖掉
+            if (latest.linkProvider != playlist.linkProvider || latest.linkId != playlist.linkId) return@launchPlaylistEdit
             val entries = libraryDao.entriesOnce(id)
             val diff = boundDiff(entries.map { it.songKey }, songs.map { it.key })
             libraryDao.replaceEntries(
                 id,
                 songs.distinctBy { it.key }.mapIndexed { index, song ->
-                    PlaylistEntryEntity(id, index, song.key, json.encodeToString(song))
+                    PlaylistEntryEntity(id, index, song.key, json.encodeToString(song.forStorage()))
                 },
             )
             if (diff.changed) {
@@ -2256,7 +2779,20 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         launchPlaylistEdit {
             val playlist = libraryDao.playlistOnce(id) ?: return@launchPlaylistEdit
             if (!playlist.bound) return@launchPlaylistEdit
-            libraryDao.putPlaylist(playlist.copy(linkProvider = "", linkId = "", linkCover = "", linkSyncedAt = 0L))
+            cancelPendingReorder(id)
+            _boundAccess.update { it - id }
+            // 绑定会同步：标成本机修改并推上去，其他设备也随之解绑
+            libraryDao.putPlaylist(
+                playlist.copy(
+                    linkProvider = "",
+                    linkId = "",
+                    linkCover = "",
+                    linkSyncedAt = 0L,
+                    updatedAt = System.currentTimeMillis(),
+                    dirty = true,
+                )
+            )
+            app.sync.onLocalChange()
             message("已解除绑定，「${playlist.name}」保留当前歌曲，不再跟随平台更新")
         }
     }
@@ -2265,7 +2801,17 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun unbindIfBound(playlistId: String) {
         val playlist = libraryDao.playlistOnce(playlistId) ?: return
         if (!playlist.bound) return
-        libraryDao.putPlaylist(playlist.copy(linkProvider = "", linkId = "", linkCover = "", linkSyncedAt = 0L))
+        // 接下来的编辑会推送；这里先把修改时间记上，解绑和编辑作为同一次修改同步出去
+        libraryDao.putPlaylist(
+            playlist.copy(
+                linkProvider = "",
+                linkId = "",
+                linkCover = "",
+                linkSyncedAt = 0L,
+                updatedAt = System.currentTimeMillis(),
+                dirty = true,
+            )
+        )
         message("已解除绑定，「${playlist.name}」改为手动维护，不再跟随平台更新")
     }
 
@@ -2284,63 +2830,169 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             dao.clearTombstone("favorite", song.key)
             remember("favorite", song)
+            // 收藏也会同步：只在本机的本地歌提示一句能上传（其它歌照旧不提示）
+            uploadPrompt("已加入收藏", listOf(song))?.let { _events.tryEmit(it) }
         }
         app.sync.onLocalChange()
     }
 
+    /** 同一首歌同时只跑一次下载；重复点击只提示，不并发写同一个文件。 */
+    private val downloading = mutableSetOf<String>()
+
     fun download(song: Song) = viewModelScope.launch {
-        val appContext = getApplication<Application>()
-        var failure: Throwable? = null
-        val stream = runCatching {
-            app.repository.playableStream(song, cookieFor(song.source), appContext.cacheDir)
-        }.onFailure {
-            if (it is CancellationException) throw it
-            failure = it
-        }.getOrNull()
-        val url = stream?.url.orEmpty()
-        if (url.isBlank()) {
-            message(failure?.message?.takeIf { it.isNotBlank() } ?: "没有可下载的地址", error = true)
+        if (song.source == LOCAL_SOURCE) {
+            // 云端副本只当在线歌放（可以进播放缓存），不另存一份到“下载”
+            if (app.localLibrary.playableItem(song.id) != null) {
+                message("「${song.title}」是本地音乐，文件已经在设备上")
+            } else {
+                message("「${song.title}」是另一台设备上的本地音乐，只能在线播放，不能下载")
+            }
             return@launch
         }
+        if (!downloading.add(song.key)) {
+            message("「${song.title}」正在下载")
+            return@launch
+        }
+        try {
+            downloadSong(song)
+        } catch (cancel: CancellationException) {
+            throw cancel
+        } catch (error: Exception) {
+            message(error.message?.takeIf { it.isNotBlank() } ?: "下载失败", error = true)
+        } finally {
+            downloading.remove(song.key)
+        }
+    }
+
+    private suspend fun downloadSong(song: Song) {
+        val appContext = getApplication<Application>()
+        val dao = app.database.dao()
+        // 上一次已完成的结果：这次重下失败时还原，别把原来的记录和文件一起弄丢
+        val previous = runCatching {
+            dao.downloads().first().firstOrNull { it.key == song.key && it.state == DOWNLOAD_DONE }
+        }.getOrNull()
         val directory = appContext.getExternalFilesDir("music") ?: appContext.filesDir
-        // 真实音质优先：无损流按 flac 存盘，不要再用搜索结果的 mp3 猜测
+        fun targetFile(extension: String) = File(
+            directory,
+            "${song.name}-${song.artist}[${song.source}].$extension"
+                .replace(Regex("[\\\\/:*?\"<>|]"), "_"),
+        )
+        // 先落库再取流：汽水要整曲下载解密，跨源回退还要搜别的平台，第一次可能很慢。
+        // 这期间下载页要能看到「正在下载」，而不是一片空白。已经下好过的保留原记录，
+        // 重下期间和进程被杀时都不会把旧文件和记录一起顶掉。
+        val keepExisting = previous != null && File(previous.path).isFile
+        if (!keepExisting) {
+            dao.saveDownload(
+                DownloadRecord(
+                    song.key,
+                    json.encodeToString(song.copy(url = "")),
+                    targetFile(song.ext.ifBlank { "mp3" }.lowercase()).absolutePath,
+                    DOWNLOAD_ACTIVE,
+                    System.currentTimeMillis(),
+                )
+            )
+        }
+        message("开始下载「${song.title}」")
+
+        var failure: Throwable? = null
+        val resolved = runCatching { resolvePlayable(canonicalForSong(song), forDownload = true) }
+            .onFailure {
+                if (it is CancellationException) throw it
+                failure = it
+            }
+            .getOrNull()
+        val ready = resolved?.resolution as? Resolution.Ready
+        if (resolved == null || ready == null || ready.url.isBlank()) {
+            val text = resolved?.let { noSourceMessage(it.track, it.resolution) }
+                ?.takeIf { it.isNotBlank() }
+                ?: failure?.message?.takeIf { it.isNotBlank() }
+                ?: "没有可下载的地址"
+            markDownloadFailed(song, previous, text)
+            message(text, error = true)
+            return
+        }
+        // 试听片段不是整曲，不能落成「已下载」（正常流程里 forDownload 已经排除了它，这里兜底）
+        if (ready.isPreview) {
+            val text = "「${song.title}」当前账号只能试听，无法下载整曲"
+            markDownloadFailed(song, previous, text)
+            message(text, error = true)
+            return
+        }
+        val url = ready.url
+        // 只用这次取流拿到的真实后缀，不再拿搜索结果的元数据猜
         val extension = listOf(
-            stream?.ext.orEmpty(),
-            song.ext,
+            ready.source.song.ext,
             Uri.parse(url).path?.let { File(it).extension }.orEmpty(),
         ).firstOrNull { it.isNotBlank() }?.lowercase() ?: "mp3"
-        val safeName = "${song.name}-${song.artist}[${song.source}].$extension"
-            .replace(Regex("[\\\\/:*?\"<>|]"), "_")
-        val file = File(directory, safeName)
-        app.database.dao().saveDownload(
-            DownloadRecord(song.key, json.encodeToString(song), file.absolutePath, "下载中", System.currentTimeMillis())
-        )
-        runCatching {
+        val file = targetFile(extension)
+        val temp = File(directory, "${file.name}.part")
+        val size = try {
             withContext(Dispatchers.IO) {
+                temp.delete()
                 if (url.startsWith("file:")) {
                     val cached = File(Uri.parse(url).path.orEmpty())
                     if (!cached.isFile) error("本地缓存文件不存在")
-                    cached.copyTo(file, overwrite = true)
+                    cached.copyTo(temp, overwrite = true)
                 } else {
                     http.newCall(Request.Builder().url(url).build()).execute().use { response ->
-                        if (!response.isSuccessful) error(response.message)
-                        file.outputStream().use { output -> response.body.byteStream().copyTo(output) }
+                        if (!response.isSuccessful) error("下载失败：${response.code} ${response.message}")
+                        temp.outputStream().use { output -> response.body.byteStream().copyTo(output) }
                     }
                 }
+                if (temp.length() <= 0L) error("下载到的文件为空")
+                // 先写临时文件再改名：重下失败也不会把上一次下好的同名文件截断
+                if (!temp.renameTo(file)) error("无法保存文件")
+                file.length()
             }
-            app.database.dao().saveDownload(
-                DownloadRecord(song.key, json.encodeToString(song), file.absolutePath, "已完成", System.currentTimeMillis())
+        } catch (cancel: CancellationException) {
+            temp.delete()
+            // 协程已取消，Room 的挂起函数会立刻再抛取消；恢复记录要用 NonCancellable
+            withContext(NonCancellable) { restoreDownload(song.key, previous) }
+            throw cancel
+        } catch (error: Exception) {
+            temp.delete()
+            val text = error.message?.takeIf { it.isNotBlank() } ?: "下载失败"
+            markDownloadFailed(song, previous, text)
+            message(text, error = true)
+            return
+        }
+        val stored = song.copy(url = "", ext = extension, bitrate = ready.source.song.bitrate, size = size)
+        dao.saveDownload(
+            DownloadRecord(song.key, json.encodeToString(stored), file.absolutePath, DOWNLOAD_DONE, System.currentTimeMillis())
+        )
+        if (previous != null && previous.path != file.absolutePath) File(previous.path).delete()
+        message("已下载「${song.title}」（${extension.uppercase(Locale.ROOT)}）")
+    }
+
+    /** 下载失败留下一条可见的记录，下载页能提示原因并直接重试；上一次已经下好的保持原样。 */
+    private suspend fun markDownloadFailed(song: Song, previous: DownloadRecord?, text: String) {
+        if (previous != null && File(previous.path).isFile) {
+            app.database.dao().saveDownload(previous)
+            return
+        }
+        app.database.dao().saveDownload(
+            DownloadRecord(
+                song.key,
+                json.encodeToString(song.copy(url = "")),
+                "",
+                DOWNLOAD_FAILED,
+                System.currentTimeMillis(),
+                text,
             )
-            message("已下载「${song.title}」")
-        }.onFailure {
-            file.delete()
-            app.database.dao().deleteDownload(song.key)
-            message(it.message ?: "下载失败", error = true)
+        )
+    }
+
+    /** 下载没成时恢复上一次已完成的记录；没有旧记录就删掉「下载中」占位。 */
+    private suspend fun restoreDownload(key: String, previous: DownloadRecord?) {
+        if (previous != null && File(previous.path).isFile) {
+            app.database.dao().saveDownload(previous)
+        } else {
+            app.database.dao().deleteDownload(key)
         }
     }
 
     fun deleteDownload(record: DownloadRecord) = viewModelScope.launch {
-        File(record.path).delete()
+        if (record.path.isNotBlank()) File(record.path).delete()
         app.database.dao().deleteDownload(record.key)
     }
 
@@ -2417,11 +3069,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         var playableTrack = track
         var ready: Resolution.Ready? = null
         var autoMatched = false
+        var autoNotice = ""
         if (local == null) {
             val result = resolvePlayable(track, pinnedProvider)
             playableTrack = result.track
             ready = result.resolution as? Resolution.Ready
             autoMatched = result.autoMatched
+            autoNotice = result.notice
             if (ready == null) {
                 base.value = base.value.copy(
                     playbackNotice = noSourceMessage(playableTrack, result.resolution),
@@ -2433,7 +3087,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         if (pinnedProvider != null) pinnedProviders[playableTrack.id] = pinnedProvider
         val source = local?.first ?: ready!!.source
         val resolvedSong = if (local != null) {
-            source.song.copy(url = Uri.fromFile(local.second).toString())
+            source.song.copy(url = local.second)
         } else {
             source.song.copy(url = ready!!.url)
         }
@@ -2444,19 +3098,25 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         val fallbackNotice = when {
             local != null -> ""
             ready!!.isPreview -> "当前为试听片段"
-            autoMatched -> "原音源不可用，已自动匹配到${ready.source.providerName}"
+            autoMatched -> autoNotice.ifBlank { "原音源不可用，已自动匹配到${ready.source.providerName}" }
             pinnedProvider != null && ready.source.providerId != pinnedProvider ->
                 "所选平台没有返回可播放地址，已切换到${ready.source.providerName}"
             else -> ""
         }
         dormant = null
+        AppLog.d(
+            "Player",
+            "起播《${resolvedSong.title}》${source.providerName}${if (local != null) "（本机文件）" else ""}" +
+                "，队列 ${queueSongs.size} 首，从第 ${startIndex.coerceAtLeast(0) + 1} 首",
+        )
         player.setMediaItems(queueSongs.map(::mediaItem), startIndex.coerceAtLeast(0), 0)
         player.prepare()
         player.play()
+        val requestId = base.value.queueId + 1
         base.value = base.value.copy(
             queue = queueSongs,
             canonicalQueue = canonicalQueue,
-            queueId = base.value.queueId + 1,
+            queueId = requestId,
             current = resolvedSong,
             currentTrack = playableTrack,
             currentSource = source,
@@ -2465,10 +3125,46 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             error = "",
             deepLink = "",
         )
+        verifyQueueApplied(player, requestId)
         rememberCanonical(playableTrack)
         remember("history", historySong(resolvedSong))
         loadLyrics(resolvedSong)
         return true
+    }
+
+    /**
+     * MediaController 的命令要经会话转给播放器，会话正好在换播放器（交叉淡化换主）或刚重连时会被顶掉：
+     * 界面已经换了歌，播放器却还是上一份队列，听感就是「点了没切」。装上以后核对一次，对不上补装一遍。
+     */
+    private fun verifyQueueApplied(player: MediaController, requestId: Int, retried: Boolean = false) {
+        viewModelScope.launch {
+            fun stillCurrent() = controller === player && base.value.queueId == requestId
+            fun applied(): Boolean {
+                val currentKey = base.value.current?.key ?: return true
+                return player.mediaItemCount == base.value.queue.size && player.currentMediaItem?.mediaId == currentKey
+            }
+            delay(QUEUE_APPLY_CHECK_MS)
+            if (!stillCurrent() || applied()) return@launch
+            // 会话推送可能比命令慢一点：再等一会儿核对，别把正常的慢当成没装上
+            delay(QUEUE_APPLY_RECHECK_MS)
+            if (!stillCurrent() || applied()) return@launch
+            val queue = base.value.queue
+            val currentKey = base.value.current?.key ?: return@launch
+            AppLog.w(
+                "Player",
+                "点歌没切过去：播放器在《${player.currentMediaItem?.mediaMetadata?.title}》（${player.mediaItemCount} 首），" +
+                    "界面是《${base.value.current?.title}》（${queue.size} 首）" + if (retried) "，重装后仍不符" else "，重装队列",
+            )
+            if (retried) return@launch
+            val index = queue.indexOfFirst { it.key == currentKey }.coerceAtLeast(0)
+            // 补装队列只修正曲目，不撤销等待期间的暂停、后台暂停或车机静音。
+            val shouldPlay = player.playWhenReady &&
+                app.carMedia?.let { it.isMuted == true || it.isPausedForMute } != true
+            player.setMediaItems(queue.map(::mediaItem), index, 0)
+            player.prepare()
+            player.playWhenReady = shouldPlay
+            verifyQueueApplied(player, requestId, retried = true)
+        }
     }
 
     fun openSource(track: CanonicalTrack, queue: List<CanonicalTrack> = _search.value.aggregateGroups) {
@@ -2948,6 +3644,16 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         return if (queue.getOrNull(hint)?.id == track.id) hint else queue.indexOfFirst { it.id == track.id }
     }
 
+    /**
+     * 播放器报的当前曲目对到队列里的哪一首。按 mediaId（就是 [Song.key]）认，不按下标：
+     * 队列刚换、播放器还停在上一份队列上时下标会指到别的歌，界面就会先跳到一首不相干的歌上。
+     */
+    private fun queueSongFor(player: Player): Song? {
+        val id = player.currentMediaItem?.mediaId
+        if (!id.isNullOrBlank()) return base.value.queue.firstOrNull { it.key == id }
+        return base.value.queue.getOrNull(player.currentMediaItemIndex)
+    }
+
     fun clearQueue() {
         dormant = null
         controller?.clearMediaItems()
@@ -2972,7 +3678,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         // 快速切歌时上一首的请求可能比新歌晚返回，只保留最新一次
         lyricsJob?.cancel()
         lyricsJob = viewModelScope.launch {
-            val lyrics = runCatching { app.repository.lyrics(song, cookieFor(song.source)) }.getOrDefault("")
+            val lyrics = runCatching {
+                // 本地歌：同名 .lrc 或匹配到的平台的歌词，由本地音乐库决定用哪份
+                if (song.source == LOCAL_SOURCE) {
+                    app.localLibrary.lyrics(song, settingsState.value.cookies)
+                } else {
+                    app.repository.lyrics(song, cookieFor(song.source))
+                }
+            }.getOrDefault("")
             // runCatching 会吞掉取消异常，被取消的旧请求在这里停下，不再写回
             if (!isActive) return@launch
             // 请求完成后再读 base：先取 base.value 再挂起会把请求期间更新的当前歌曲、播放状态写回旧值
@@ -3031,12 +3744,15 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun canonicalForSong(song: Song): CanonicalTrack {
         val providerId = song.source.ifBlank { settingsState.value.provider }
-        return TrackMatcher.singleSource(song, providerName(providerId), providerId, cookieFor(providerId))
+        val track = TrackMatcher.singleSource(song, providerName(providerId), providerId, cookieFor(providerId))
+        // 本地歌的标签常是“Track 01 / 未知歌手”，按标题歌手时长算的规范 id 会撞车，
+        // 队列按 id 去重时就把别的歌吞掉了；本地歌的身份本来就唯一，直接用它
+        return if (providerId == LOCAL_SOURCE) track.copy(id = song.key) else track
     }
 
     private fun preferredSong(track: CanonicalTrack): Song {
-        localFileFor(track)?.let { (source, file) ->
-            return source.song.copy(url = Uri.fromFile(file).toString())
+        localFileFor(track)?.let { (source, url) ->
+            return source.song.copy(url = url)
         }
         val policy = resolver.buildPolicy(track, null)
         val source = resolver.orderCandidates(track, null, emptySet(), policy).firstOrNull()
@@ -3049,22 +3765,32 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         return if (song.source in NEEDS_RESOLVE_ON_SWITCH) song.copy(url = "") else song
     }
 
-    private fun localFileFor(track: CanonicalTrack): Pair<TrackSource, File>? {
+    /**
+     * 这台设备上现成的文件：本地音乐里扫到、文件还在的本地歌（content:// 地址），或下载完成的歌（file://）。
+     * 只查内存，不碰文件；文件其实已经没了的话播放器会报错，再走 onPlayerError 换源。
+     */
+    private fun localFileFor(track: CanonicalTrack): Pair<TrackSource, String>? {
+        track.sources.firstOrNull { it.providerId == LOCAL_SOURCE }?.let { source ->
+            val item = app.localLibrary.playableItem(source.song.id) ?: return@let
+            // 显示信息以本地音乐库现在算出来的为准（匹配、标题设置可能已经变了）
+            return source.copy(song = item.song, availability = Availability.Playable) to item.row.uri
+        }
         val records = downloads.value
         if (records.isEmpty()) return null
         for (source in track.sources) {
-            val record = records.firstOrNull { it.key == source.song.key && it.state == "已完成" } ?: continue
+            val record = records.firstOrNull { it.key == source.song.key && it.state == DOWNLOAD_DONE } ?: continue
             val file = File(record.path)
-            if (file.exists() && file.length() > 0) return source to file
+            if (file.exists() && file.length() > 0) return source to Uri.fromFile(file).toString()
         }
         return null
     }
 
-    private fun historySong(song: Song): Song =
-        if (song.url.startsWith("file:")) song.copy(url = "") else song
+    private fun historySong(song: Song): Song = song.forStorage()
 
     private fun noSourceMessage(track: CanonicalTrack, resolution: Resolution): String {
         val attempts = (resolution as? Resolution.None)?.attempts.orEmpty()
+        // 本地歌放不了：原因由本地音乐库给（只在原设备上 / 文件不在了），比“都没有返回地址”说得清楚
+        attempts.firstOrNull { it.source.providerId == LOCAL_SOURCE }?.let { return it.reason }
         val reasons = attempts.map { it.reason }
         val tried = attempts.map { it.source.providerName }.distinct()
         return when {
@@ -3082,18 +3808,26 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         val track: CanonicalTrack,
         val resolution: Resolution,
         val autoMatched: Boolean,
+        /** 换到别的源时要给用户看的说明；空就用默认的“已自动匹配到…”。 */
+        val notice: String = "",
     )
 
     private suspend fun resolvePlayable(
         track: CanonicalTrack,
         pinnedProvider: String? = null,
         excludeProviders: Set<String> = emptySet(),
+        forDownload: Boolean = false,
     ): AutoResolution {
+        if (track.sources.any { it.providerId == LOCAL_SOURCE }) return resolveLocal(track, excludeProviders)
+        // 下载只要整曲：试听片段和无损档位一样会被平台降级，回退时也优先能下整曲的源
+        fun policyFor(item: CanonicalTrack) = resolver.buildPolicy(item, pinnedProvider).let {
+            if (forDownload) it.copy(allowPreview = false, pinnedProvider = null) else it
+        }
         val initial = resolver.resolve(
             track,
             pinnedProvider,
             excludeProviders,
-            resolver.buildPolicy(track, pinnedProvider),
+            policyFor(track),
         )
         if (initial is Resolution.Ready) return AutoResolution(track, initial, autoMatched = false)
 
@@ -3121,7 +3855,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 current,
                 pinnedProvider,
                 excludeProviders,
-                resolver.buildPolicy(current, pinnedProvider),
+                policyFor(current),
             )
             if (resolution is Resolution.Ready) {
                 return AutoResolution(current, resolution, autoMatched = true)
@@ -3129,6 +3863,88 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             last = resolution
         }
         return AutoResolution(current, last, autoMatched = false)
+    }
+
+    /**
+     * 本地歌的解析：先问本地音乐库（本机文件 → 云端副本 → 匹配到的平台版本）；
+     * 这台设备上从没扫到过、也没有匹配记录（别的设备加进歌单的）时，「没有文件时用平台版本」开着
+     * 就按歌名歌手走一遍现有的自动匹配。都不行返回 None，原因记在本地那条尝试里；歌单条目不动。
+     * 刚放失败的本机文件或云端副本（[excludeProviders] 里有 local）不再拿回来：两者是同一份内容，
+     * 格式放不了换哪份都一样，直接去平台版本，免得在同一个坏文件上来回重试。
+     */
+    private suspend fun resolveLocal(track: CanonicalTrack, excludeProviders: Set<String>): AutoResolution {
+        val source = track.sources.first { it.providerId == LOCAL_SOURCE }
+        val failedBefore = LOCAL_SOURCE in excludeProviders
+        val outcome = app.localLibrary.resolve(source.song, skipFile = failedBefore, skipCloud = failedBefore)
+        if (outcome is LocalPlayable.File) {
+            val ready = source.copy(song = outcome.song, availability = Availability.Playable)
+            val updated = track.copy(sources = track.sources.map { if (it.providerId == LOCAL_SOURCE) ready else it })
+            return AutoResolution(updated, Resolution.Ready(ready, outcome.uri, isPreview = false), autoMatched = false)
+        }
+        if (outcome is LocalPlayable.Cloud) {
+            // 云端副本还是这首本地歌（身份、显示不变），只是地址换成云端的临时地址；不提示“换了版本”
+            val ready = source.copy(song = outcome.song, availability = Availability.Playable)
+            val updated = track.copy(sources = track.sources.map { if (it.providerId == LOCAL_SOURCE) ready else it })
+            return AutoResolution(
+                updated,
+                Resolution.Ready(ready, outcome.stream.url, isPreview = outcome.stream.preview),
+                autoMatched = false,
+            )
+        }
+        val why = (outcome as? LocalPlayable.Platform)?.note?.ifBlank { null } ?: "这台设备上没有这个文件"
+        val reason = when (outcome) {
+            is LocalPlayable.Unavailable -> outcome.reason
+            // 匹配到的平台版本自己也放不了（会员、下架），而且别的平台也没找到：两件事都说清楚
+            is LocalPlayable.Platform -> "$why，匹配到的${providerName(outcome.song.source)}版本也放不了"
+            else -> why
+        }
+        val failed = AutoResolution(
+            track,
+            Resolution.None(listOf(Attempt(source.copy(availability = Availability.Unavailable), reason))),
+            autoMatched = false,
+        )
+        val exclude = excludeProviders + LOCAL_SOURCE
+        suspend fun tryPlatform(song: Song, score: Float, method: MatchMethod): AutoResolution? {
+            val providerId = song.source
+            val withPlatform = TrackMatcher.withSource(
+                track,
+                TrackSource(providerId, providerName(providerId), song, matchScore = score, matchMethod = method),
+            )
+            val platformOnly = withPlatform.copy(sources = withPlatform.sources.filter { it.providerId != LOCAL_SOURCE })
+            val resolution = resolver.resolve(platformOnly, null, exclude, resolver.buildPolicy(platformOnly, null))
+            if (resolution !is Resolution.Ready) return null
+            return AutoResolution(
+                withPlatform,
+                resolution,
+                autoMatched = true,
+                notice = "$why，用${resolution.source.providerName}的版本播放",
+            )
+        }
+        // 匹配到的那个平台放不了（会员、下架）时，和没匹配过的歌一样去其它平台找同一首
+        val searchOthers = when (outcome) {
+            is LocalPlayable.Platform -> {
+                tryPlatform(outcome.song, outcome.confidence, MatchMethod.Manual)?.let { return it }
+                true
+            }
+            is LocalPlayable.Unavailable -> outcome.fallbackAllowed && outcome.searchable
+            else -> false
+        }
+        if (searchOthers) {
+            val tried = (outcome as? LocalPlayable.Platform)?.song?.source
+            // 有匹配时拿匹配到的那首（平台上的歌名歌手）去别的平台找同一首：本地歌的标题常常只是文件名，
+            // 拿它搜不准。同步来的占位匹配歌名就是歌单里那个，和本地歌一样，照旧用本地歌
+            val reference = (outcome as? LocalPlayable.Platform)?.song
+                ?.takeUnless { it.extra[LocalLibrary.EXTRA_SYNCED_MATCH] == "1" || it.name.isBlank() }
+                ?: source.song
+            for (providerId in autoMatchProviders(exclude + listOfNotNull(tried))) {
+                val result = withTimeoutOrNull(AUTO_MATCH_TIMEOUT_MS) {
+                    runCatching { matchJob.matchOne(reference, providerId) }.getOrNull()
+                } ?: continue
+                val song = result.song ?: continue
+                tryPlatform(song, result.score, result.method)?.let { return it }
+            }
+        }
+        return failed
     }
 
     private fun autoMatchProviders(exclude: Set<String>): List<String> {
@@ -3192,7 +4008,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         settingsState.value.cookies[providerId.ifBlank { settingsState.value.provider }].orEmpty()
 
     private suspend fun remember(bucket: String, song: Song) =
-        app.database.dao().save(SavedSong(song.key, bucket, json.encodeToString(song), System.currentTimeMillis()))
+        app.database.dao().save(SavedSong(song.key, bucket, json.encodeToString(song.forStorage()), System.currentTimeMillis()))
 
     private fun mediaItem(song: Song): MediaItem {
         // Apple 整曲开头那段用的是另一把 key，Provider 单独成了一份清单；地址搭在
@@ -3344,7 +4160,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             resolving = viewModelScope.launch {
                 val local = localFileFor(track)
                 if (local != null) {
-                    val resolved = local.first.song.copy(url = Uri.fromFile(local.second).toString())
+                    val resolved = local.first.song.copy(url = local.second)
                     controller?.replaceMediaItem(index, mediaItem(resolved))
                     prepareIfStopped()
                     unplayableSkips = 0
@@ -3380,7 +4196,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     currentTrack = result.track,
                     currentSource = resolution.source,
                     playbackNotice = when {
-                        result.autoMatched -> "原音源不可用，已自动匹配到${resolution.source.providerName}"
+                        result.autoMatched -> result.notice.ifBlank { "原音源不可用，已自动匹配到${resolution.source.providerName}" }
                         resolution.isPreview -> "当前为试听片段"
                         else -> skipNotice.orEmpty()
                     },
@@ -3520,10 +4336,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             failoverInProgress = true
             viewModelScope.launch {
                 val local = localFileFor(track)
-                if (local != null && !base.value.current?.url.orEmpty().startsWith("file:")) {
+                // 坏的就是这个本机文件（下载的 file://、本地音乐的 content://）时别再换回它，交给下面换源，免得原地循环
+                if (local != null && local.second != queued?.url) {
                     val player = controller
                     if (player != null) {
-                        val resolved = local.first.song.copy(url = Uri.fromFile(local.second).toString())
+                        val resolved = local.first.song.copy(url = local.second)
                         player.replaceMediaItem(index, mediaItem(resolved))
                         player.seekTo(position)
                         player.play()
@@ -3599,7 +4416,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         override fun onEvents(player: Player, events: Player.Events) {
             // 从磁盘接上的队列还没装进播放器：播放器是空的，进度和时长都以存下来的为准
             val sleeping = dormant != null && player.mediaItemCount == 0
-            val song = if (sleeping) null else base.value.queue.getOrNull(player.currentMediaItemIndex)
+            val song = if (sleeping) null else queueSongFor(player)
             val previous = base.value.current
             val rawDuration = player.duration
             val duration = when {
@@ -3732,7 +4549,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             val resolved: Song
             var resolvedTrack = track
             if (local != null) {
-                resolved = local.first.song.copy(url = Uri.fromFile(local.second).toString())
+                resolved = local.first.song.copy(url = local.second)
             } else {
                 val result = resolvePlayable(track, pinnedProviders[track.id])
                 val ready = result.resolution as? Resolution.Ready ?: return@launch
@@ -4072,7 +4889,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 val track = tracks[at]
                 val local = localFileFor(track)
                 if (local != null) {
-                    return@withTimeoutOrNull Resumed(at, track, local.first, local.first.song.copy(url = Uri.fromFile(local.second).toString()))
+                    return@withTimeoutOrNull Resumed(at, track, local.first, local.first.song.copy(url = local.second))
                 }
                 val result = resolvePlayable(track, pinnedProviders[track.id])
                 val ready = result.resolution as? Resolution.Ready
@@ -4643,6 +5460,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { app.sync.connect(providerId, token.trim(), remote.trim()) }
     }
 
+    fun connectWebDav(account: io.neta.music.data.webdav.WebDavAccount) {
+        viewModelScope.launch { app.sync.connectWebDav(account) }
+    }
+
+    /** account 为 null 时测本机已保存的 WebDAV 账号。 */
+    fun testWebDav(account: io.neta.music.data.webdav.WebDavAccount?) = app.sync.testWebDav(account)
+
     fun resolveInitialSync(strategy: SyncStrategy) {
         viewModelScope.launch { app.sync.resolveInitial(strategy) }
     }
@@ -4676,6 +5500,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun syncProviderLabel(id: String): String = when (id) {
         "gist" -> "GitHub Gist"
         "gitee" -> "Gitee 代码片段"
+        "webdav" -> "WebDAV"
         else -> id
     }
 
@@ -4903,6 +5728,37 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         else -> "自定义"
     }
 
+    /** 加进歌单后提示里的“上传”：打开全局的上传面板。 */
+    fun openUploadSheet(ids: List<String>) = app.localUploads.openSheet(ids)
+
+    /**
+     * 加进歌单后的那句提示：里面有只在本机的本地歌（同步连着、设置开着、哪个云端都还没有、也没在排队）时
+     * 换成带“上传”的提示，否则照旧。
+     */
+    private fun addedMessage(text: String, added: List<Song>) {
+        val prompt = uploadPrompt(text, added)
+        if (prompt != null) _events.tryEmit(prompt) else message(text)
+    }
+
+    private fun uploadPrompt(text: String, added: List<Song>): UiEvent.UploadPrompt? {
+        // 没有本地歌就不碰本地音乐库（它是懒加载的）
+        if (added.none { it.source == LOCAL_SOURCE }) return null
+        val library = app.localLibrary
+        val index = library.index.value
+        val queue = app.localUploads.state.value
+        val ids = LocalUploadRules.promptFor(
+            songs = added,
+            enabled = library.prefs.value.uploadPrompt,
+            syncConnected = app.sync.state.value.account != null,
+            onDevice = { index.byId[it]?.onDevice == true },
+            hasReadyCopy = { id ->
+                LocalUploadRules.hasAnyReadyCopy(index.remotes[id].orEmpty()) || queue.find(id).any { !it.item.stage.terminal }
+            },
+        )
+        if (ids.isEmpty()) return null
+        return UiEvent.UploadPrompt(LocalUploadRules.promptText(text, added.size, ids.size), ids)
+    }
+
     private fun message(text: String, error: Boolean = false) {
         if (error) base.value = base.value.copy(error = text) else _events.tryEmit(UiEvent.Message(text))
     }
@@ -4953,6 +5809,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
         /** 队列变动后停这么久再落盘，连续改队列（听歌模式续一批、批量加入）只写一次。 */
         const val QUEUE_SAVE_DEBOUNCE_MS = 1_000L
+
+        /** 点歌后等这么久核对播放器里是不是换成了这份队列（命令经会话转发，没装上就补一次）。 */
+        const val QUEUE_APPLY_CHECK_MS = 2_000L
+
+        /** 第一遍没对上时再等一会儿：会话把播放器状态推回控制器本身就有延迟。 */
+        const val QUEUE_APPLY_RECHECK_MS = 800L
 
         /** 进度循环 100ms 一圈：歌词换行、系统媒体条和进度条都靠它，越密跟得越紧。100 圈（10 秒）存一次位置。 */
         const val PROGRESS_TICK_MS = 100L

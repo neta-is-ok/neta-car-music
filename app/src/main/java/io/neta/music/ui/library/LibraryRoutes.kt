@@ -14,6 +14,8 @@ import androidx.navigation.navArgument
 import io.neta.music.ui.AppNav
 import io.neta.music.ui.TvExitBackHandler
 import io.neta.music.ui.components.LocalAppSnackbar
+import io.neta.music.ui.local.LOCAL_MUSIC_ROUTE
+import io.neta.music.ui.local.localMusicRoutes
 import kotlinx.coroutines.launch
 
 /**
@@ -42,6 +44,7 @@ fun NavGraphBuilder.libraryRoutes(app: AppNav) {
                 openDownloads = { app.nav.navigate("downloads") },
                 openCharts = { app.openTab("charts") },
                 openWelfare = { app.nav.navigate("welfare") },
+                openLocalMusic = { app.nav.navigate(LOCAL_MUSIC_ROUTE) },
             )
         }
         // 「我的」页的入口卡也要显示任务进度，进页面就把服务端状态读回来
@@ -133,6 +136,7 @@ fun NavGraphBuilder.libraryRoutes(app: AppNav) {
             onBack = app::back,
         )
     }
+    localMusicRoutes(app)
     composable("syncCenter") {
         val sync by app.model.syncState.collectAsState()
         SyncCenterScreen(sync, app.actions, onBack = app::back) { provider ->
@@ -162,6 +166,7 @@ private fun LocalPlaylistHost(app: AppNav, id: String, embedded: Boolean, onBack
     val librarySearch by app.model.librarySearch.collectAsState()
     val favorites by app.model.favorites.collectAsState()
     val localPlaylists by app.model.localPlaylists.collectAsState()
+    val boundAccess by app.actions.boundAccess.collectAsState()
     LocalPlaylistScreen(
         playlistId = id,
         detailFlow = detailFlow,
@@ -170,6 +175,7 @@ private fun LocalPlaylistHost(app: AppNav, id: String, embedded: Boolean, onBack
         librarySearch = librarySearch,
         favorites = favorites,
         playlists = localPlaylists,
+        boundAccess = boundAccess[id],
         actions = app.actions,
         onBack = onBack,
         onOpenSync = { app.nav.navigate("syncCenter") },

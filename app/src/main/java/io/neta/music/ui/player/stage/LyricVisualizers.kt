@@ -7,6 +7,7 @@ import io.neta.music.ui.player.stage.modes.CineramaVisualizer
 import io.neta.music.ui.player.stage.modes.JumpVisualizer
 import io.neta.music.ui.player.stage.modes.MisideDropVisualizer
 import io.neta.music.ui.player.stage.modes.Rings52HzVisualizer
+import io.neta.music.ui.player.stage.modes.RushVisualizer
 import io.neta.music.ui.player.stage.modes.StardriftVisualizer
 import io.neta.music.ui.player.stage.modes.VinylDiscVisualizer
 import io.neta.music.ui.player.stage.modes.WaveLightVisualizer
@@ -15,6 +16,7 @@ import io.neta.music.ui.player.stage.modes.WaveLightVisualizer
 object LyricVisualizers {
     val all: List<LyricVisualizer> = listOf(
         ClassicVisualizer,
+        RushVisualizer,
         AuroraVisualizer,
         Rings52HzVisualizer,
         MisideDropVisualizer,

@@ -58,7 +58,9 @@ class MyMusicApp : Application(), ViewModelStoreOwner, Configuration.Provider {
     /** 切歌过渡的离线分析缓存；播放侧在主线程上同步读 [AutomixAnalysisStore.cached]。 */
     lateinit var automixStore: io.neta.music.playback.AutomixAnalysisStore
     val automixAnalyzer by lazy {
-        io.neta.music.playback.AutomixAnalyzer(this, mediaCache, automixStore)
+        io.neta.music.playback.AutomixAnalyzer(this, mediaCache, automixStore) {
+            cloud.routing(androidx.media3.datasource.DefaultDataSource.Factory(this))
+        }
     }
     lateinit var sync: SyncCoordinator
     lateinit var update: UpdateRepository
@@ -73,6 +75,29 @@ class MyMusicApp : Application(), ViewModelStoreOwner, Configuration.Provider {
     internal var carMedia: NetaMediaController? = null
     val sleepTimer by lazy { SleepTimer(appScope) { carMedia?.cancelResume() } }
     val systemTheme by lazy { SystemTheme(this) }
+    /** 网易云盘、QQ 云盘、WebDAV 三种云端（本地歌的云端副本）；WebDAV 用同步里配好的账号。 */
+    val cloud by lazy { io.neta.music.data.cloud.CloudHub(settings, sync.webDavAccounts, appScope) }
+
+    /** 本地音乐库：扫描、匹配、本地歌的播放解析和歌词，以及跨设备的线索（云端副本、匹配、所在设备）。 */
+    val localLibrary by lazy {
+        io.neta.music.data.local.LocalLibrary(
+            this,
+            database.localTracks(),
+            database.localRefs(),
+            settings,
+            repository,
+            cloud,
+            appScope,
+        )
+    }
+
+    /**
+     * 本地歌上传：网易云盘、WebDAV 各一条串行队列，落盘在 cloud_uploads，后台用 WorkManager 前台服务跑。
+     * 启动时在 onCreate 里放回队列；后台任务被系统拉起时也会第一次取到它。
+     */
+    val localUploads by lazy {
+        io.neta.music.data.local.LocalUploads(localLibrary, cloud, database.localUploads(), sync.webDavAccounts)
+    }
 
     override val viewModelStore = ViewModelStore()
 
@@ -144,6 +169,16 @@ class MyMusicApp : Application(), ViewModelStoreOwner, Configuration.Provider {
             scope = appScope,
         )
         update = UpdateRepository(this, settings)
+        // 本地歌的线索跟着歌单同步：建快照时从本地音乐库取，合并完写回；线索一变（换匹配、上传、删云端）就防抖同步
+        sync.localRefs = localLibrary.syncRefs
+        localLibrary.onRefsChanged = { sync.onLocalChange() }
+        // 本地音乐：启动后等一会儿做一遍增量扫描（没给权限、没加文件夹时什么都不做）
+        localLibrary.startupScan()
+        // 上传队列：放回上次没传完的；没有后台任务可用（解锁前的进程）时 runner 为空，在进程里直接传
+        if (backgroundWork) {
+            localUploads.runner = io.neta.music.data.local.LocalUploadWorker.runner(this, appScope)
+        }
+        localUploads.start()
         // 日志导出用的设备和版本信息，启动时采一次就够
         AppLog.captureHeader(this)
         queueStore = QueueStore(this)

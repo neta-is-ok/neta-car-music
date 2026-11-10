@@ -162,7 +162,7 @@ fun AboutScreen(
                     count = 7,
                     onClick = onLicenses,
                     icon = Icons.Filled.Code,
-                    summary = "AGPL-3.0 · music-lib 与第三方依赖",
+                    summary = "AGPL-3.0 · music-lib、Folia 模组、Rush 与第三方依赖",
                 )
                 ListRow(
                     title = "项目源码",
@@ -223,7 +223,7 @@ fun AboutScreen(
         }
         item(key = "note", contentType = "infoNote") {
             Box(Modifier.padding(top = 16.dp)) {
-                InfoNote("Cookie、播放记录和下载文件只保存在本机。同步仅使用你选择的 Gist / Gitee 账号，写入自建歌单数据；应用没有集中式服务器。")
+                InfoNote("播放记录、进度和下载文件保存在本机。同步将自建歌单、收藏和平台账号 Cookie 写入你选择的 Gist、Gitee 或 WebDAV；本地音频只有主动上传时才会传到云端。")
             }
         }
         item(key = "footer", contentType = "footer") {

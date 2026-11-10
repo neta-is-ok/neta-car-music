@@ -81,18 +81,24 @@ class PlaybackService : MediaSessionService() {
         val drmManagers = mutableMapOf<String, DrmSessionManager>()
         val drmLock = Any()
         val drmInfoLogged = java.util.concurrent.atomic.AtomicBoolean(false)
+        // 本地歌的 WebDAV 副本要带认证和证书钉住：按地址把 WebDAV 服务器下面的请求交给它自己的客户端，
+        // 其余原样走默认工厂。包在缓存里面，云端副本和在线歌一样进播放缓存，但不会存进“下载”
+        val upstream = app?.cloud?.routing(DefaultDataSource.Factory(this)) ?: DefaultDataSource.Factory(this)
         val baseFactory = DefaultMediaSourceFactory(
                 cache?.let {
-                    val direct = DefaultDataSource.Factory(this)
+                    val direct = upstream
                     LiveBypassDataSourceFactory(
                         cached = CacheDataSource.Factory().setCache(it).setUpstreamDataSourceFactory(direct),
                         direct = direct,
                         isLive = { uri ->
                             val host = uri.host.orEmpty()
-                            host == YUNTING_LIVE_HOST || (host.endsWith(".radio.cn") && uri.path.orEmpty().endsWith(".m3u8"))
+                            // 本机文件（本地音乐的 content://、下载的 file://）直接读：
+                            // 走缓存只会把文件再抄一份进播放缓存，还挤掉在线歌曲的缓存
+                            uri.scheme == "content" || uri.scheme == "file" ||
+                                host == YUNTING_LIVE_HOST || (host.endsWith(".radio.cn") && uri.path.orEmpty().endsWith(".m3u8"))
                         },
                     )
-                } ?: DefaultDataSource.Factory(this),
+                } ?: upstream,
             ).setDrmSessionManagerProvider { mediaItem ->
                 val drm = mediaItem.localConfiguration?.drmConfiguration
                 if (drm?.scheme != C.WIDEVINE_UUID) return@setDrmSessionManagerProvider DrmSessionManager.DRM_UNSUPPORTED

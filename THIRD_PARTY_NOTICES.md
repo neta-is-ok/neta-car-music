@@ -38,6 +38,16 @@ The playback-report state machine in `data/playreport/BasePlayReporter.kt` is sh
 
 All of these channels are best-effort: they carry no user-identifying data beyond what the platform already receives for the same account, they fail silently, and they can be switched off entirely in `设置 › 播放上报`.
 
+## Platform playlist writes (protocol only)
+
+Editing a bound platform playlist uses the following unofficial write contracts. No upstream source code is bundled for these; the Kotlin implementations are written against the request formats documented by the referenced projects.
+
+- **NetEase Cloud Music** (`data/native/NetEaseProvider.kt`): `POST https://music.163.com/api/playlist/manipulate/tracks` (`op=add|del`, `pid`, `trackIds`, `imme`) and the Web API's `__csrf` cookie. Reference: NeteaseCloudMusicApi's `module/playlist_tracks.js`.
+- **QQ Music** (`data/native/QQProvider.kt`): `musicu.fcg` module `music.musicasset.PlaylistDetailWrite` (`AddSonglist` / `DelSonglist` / `SeqSonglist`), with `dirId`, `tid`, and `v_songInfo` / `v_songPair`. Reference: https://github.com/L-1124/QQMusicApi (`qqmusic_api/modules/songlist.py`) and https://github.com/jsososo/QQMusicApi (`routes/songlist.js`, legacy fcgi endpoints).
+- **Kugou Music** (`data/native/KugouProvider.kt`): cloud playlist service `/cloudlist.service/v6/add_song`, `/v4/delete_songs`, `/v1/modify_song_sort`, using the Android signature and the cloudlist AES/RSA envelope. Reference: https://github.com/MakcRe/KuGouMusicApi (`module/playlist_tracks_add.js`, `playlist_tracks_del.js`, `playlist_tracks_sort.js`).
+
+These are best-effort unofficial interfaces. They are only used when the user explicitly edits a bound playlist that belongs to the signed-in account.
+
 ## libmssdk (protocol only)
 
 - Upstream: https://github.com/sodahub-org/libmssdk
@@ -189,6 +199,28 @@ These features were written from the mods' public descriptions only; none of the
 - Splitting one-line bilingual lyrics — lyric-split-translation 1.2.0 (tumuyan, https://cnb.cool/ai-zoomer/fork-from/folia): the whole-song divider vote and threshold rule described in its README.
 - Per-song random animation — lyric-style-switcher 1.2.1 (Huaq520, https://github.com/Huaq520/lyric-style-switcher).
 - Simplified-to-Traditional conversion and romanization use the transliterators built into Android (`android.icu.text.Transliterator`, Android 10+); no dictionary or library is bundled. opencc-traditional-lyrics and bilingual-ruby-lyrics were consulted only for the feature set.
+
+## Rush (full-screen lyric animation "Rush")
+
+- Upstream: https://github.com/shub39/Rush
+- Revision checked: 9fa1391c4b4b472f7d03c9bfbd47612330574463 (master on 2026-11-09, app version 7.2.1)
+- Copyright (C) 2026 Shubham Gorai
+- License: GNU General Public License v3.0 or (at your option) any later version
+- Location: `app/src/main/java/io/neta/music/ui/player/stage/modes/Rush*.kt`
+- Usage: the "Rush" lyric animation is a Kotlin rewrite of Rush's lyrics page:
+  the synced lyric list (current line anchored at one third of the viewport,
+  0.8 scale and distance blur for other lines, auto-scroll pause after dragging),
+  the per-word feathered highlight with optional duration-based font weight,
+  the three-dot interlude indicator, and the six lyric backgrounds (solid, blurred
+  album art, the "hypnotic" and "curve" AGSL shaders, the wave and gradient
+  visualizers). Audio input comes from myMusic's own PCM analysis instead of
+  android.media.audiofx.Visualizer. No fonts, icons, strings or other assets
+  from Rush are bundled.
+- These files keep the upstream GPL-3.0-or-later header and copyright line and
+  carry a notice of the changes made and the date. They are combined with the
+  AGPL-3.0 code of myMusic under section 13 of both licenses; the combined
+  work is distributed under AGPL-3.0, and the Rush-derived files remain
+  available under GPL-3.0-or-later.
 
 ## MaterialKolor
 

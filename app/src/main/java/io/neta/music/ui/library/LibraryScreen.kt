@@ -111,6 +111,8 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import io.neta.music.data.DOWNLOAD_DONE
+import io.neta.music.data.DOWNLOAD_FAILED
 import io.neta.music.data.DownloadRecord
 import io.neta.music.data.ListenTaskState
 import io.neta.music.ui.SodaWelfareUi
@@ -150,6 +152,8 @@ import io.neta.music.ui.song
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import io.neta.music.ui.local.LocalMusicEntryRow
+import io.neta.music.ui.local.rememberLocalEntrySummary
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.cancellation.CancellationException
@@ -167,6 +171,7 @@ class LibraryNav(
     val openDownloads: () -> Unit,
     val openCharts: () -> Unit,
     val openWelfare: () -> Unit,
+    val openLocalMusic: () -> Unit = {},
 )
 
 /** 新建菜单的三项：新建歌单、导入歌单链接、从文件导入。三端只是外形不同。 */
@@ -276,7 +281,13 @@ private fun PhoneLibrary(
                         tileHeight = if (phone) 100.dp else 112.dp,
                     )
                 }
-                item(key = "welfare", contentType = "card") { WelfareEntryCard(soda, listen.todayMinutes, nav.openWelfare) }
+                // 本地音乐和“汽水天天送会员”并成一组（两行分段圆角）
+                item(key = "localMusic", contentType = "card") {
+                    LocalMusicEntryRow(nav.openLocalMusic, index = 0, count = 2, modifier = Modifier.padding(top = 12.dp))
+                }
+                item(key = "welfare", contentType = "card") {
+                    WelfareEntryCard(soda, listen.todayMinutes, nav.openWelfare, index = 1, count = 2, modifier = Modifier)
+                }
                 item(key = "sync", contentType = "card") { SyncStatusCard(sync, nav.openSync, Modifier.padding(top = 12.dp)) }
                 item(key = "plHead", contentType = "section") {
                     SectionLabel("自建歌单", trailing = { CountTag("${playlists.size} 个") })
@@ -318,7 +329,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.playlistItems(
                 EmptyState(
                     icon = Icons.AutoMirrored.Filled.PlaylistAdd,
                     title = "还没有自建歌单",
-                    message = "新建歌单后可以添加歌曲、调整顺序，并同步到 GitHub Gist 或 Gitee。",
+                    message = "新建歌单后可以添加歌曲、调整顺序，并同步到 GitHub Gist、Gitee 或 WebDAV。",
                     actionLabel = "新建歌单",
                     onAction = onCreate,
                 )
@@ -427,7 +438,13 @@ private fun TabletLibrary(
                         }
                     }
                 }
-                item(key = "welfare", contentType = "card") { WelfareEntryCard(soda, listen.todayMinutes, nav.openWelfare) }
+                // 本地音乐和“汽水天天送会员”并成一组（两行分段圆角）
+                item(key = "localMusic", contentType = "card") {
+                    LocalMusicEntryRow(nav.openLocalMusic, index = 0, count = 2, modifier = Modifier.padding(top = 12.dp))
+                }
+                item(key = "welfare", contentType = "card") {
+                    WelfareEntryCard(soda, listen.todayMinutes, nav.openWelfare, index = 1, count = 2, modifier = Modifier)
+                }
                 item(key = "sync", contentType = "card") { SyncStatusCard(sync, nav.openSync, Modifier.padding(top = 12.dp)) }
                 item(key = "plHead", contentType = "section") {
                     SectionLabel("自建歌单", trailing = { NewPlaylistSplitButton(menu) })
@@ -547,6 +564,15 @@ private fun TvLibrary(
                     ) {
                         Text("下载", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                         Text(stats.downloadLabel, style = MaterialTheme.typography.bodyMedium)
+                    }
+                    TvTile(
+                        modifier = Modifier.width(240.dp),
+                        container = MaterialTheme.colorScheme.secondaryContainer,
+                        content = MaterialTheme.colorScheme.onSecondaryContainer,
+                        onClick = nav.openLocalMusic,
+                    ) {
+                        Text("本地音乐", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Text(rememberLocalEntrySummary(), style = MaterialTheme.typography.bodyMedium, maxLines = 2)
                     }
                 }
             }
@@ -733,6 +759,7 @@ internal class LibraryStats(
     val historyTotal: Int,
     val downloadsDone: Int,
     val downloadsActive: Int,
+    val downloadsFailed: Int,
     val downloadBytes: Long,
 ) {
     val historyLabel: String get() = when {
@@ -742,6 +769,7 @@ internal class LibraryStats(
     }
     val downloadLabel: String get() = when {
         downloadsActive > 0 -> "$downloadsActive 首下载中"
+        downloadsFailed > 0 -> "$downloadsFailed 首下载失败"
         downloadsDone > 0 -> "$downloadsDone 首 · ${formatBytes(downloadBytes)}"
         else -> "还没有下载"
     }
@@ -772,7 +800,8 @@ internal fun rememberLibraryStats(
             historyToday = history.count { it.updatedAt >= today },
             historyTotal = history.size,
             downloadsDone = done.size,
-            downloadsActive = downloads.size - done.size,
+            downloadsActive = downloads.count { it.state != DOWNLOAD_DONE && it.state != DOWNLOAD_FAILED },
+            downloadsFailed = downloads.count { it.state == DOWNLOAD_FAILED },
             downloadBytes = downloadBytes,
         )
     }
@@ -944,6 +973,7 @@ private fun LibraryBentoRow(
             title = "下载",
             detail = when {
                 stats.downloadsActive > 0 -> "${stats.downloadsActive} 首下载中"
+                stats.downloadsFailed > 0 -> "${stats.downloadsFailed} 首下载失败"
                 stats.downloadsDone > 0 -> "${stats.downloadsDone} 首"
                 else -> "暂无下载"
             },
@@ -1039,7 +1069,7 @@ private fun SyncStatusCard(sync: SyncUiState, onOpen: () -> Unit, modifier: Modi
         )
         sync.account != null && sync.error.isNotBlank() -> Triple("同步失败", sync.error, IconTone.Error)
         sync.status == SyncStatus.Syncing -> Triple("正在同步…", sync.phase.ifBlank { sync.providerLabel }, IconTone.Primary)
-        sync.account == null -> Triple("把音乐库同步到云端", "连接 GitHub Gist 或 Gitee，同步歌单、收藏和平台账号", IconTone.Secondary)
+        sync.account == null -> Triple("把音乐库同步到云端", "连接 GitHub Gist、Gitee 或 WebDAV，同步歌单、收藏和平台账号", IconTone.Secondary)
         else -> return
     }
     ListRow(
@@ -1378,8 +1408,6 @@ internal fun PaddingValues.withGutter(horizontal: Dp, extraBottom: Dp = 0.dp): P
     top = calculateTopPadding(),
     bottom = calculateBottomPadding() + extraBottom,
 )
-
-internal const val DOWNLOAD_DONE = "已完成"
 
 internal fun startOfToday(): Long {
     val zone = ZoneId.systemDefault()

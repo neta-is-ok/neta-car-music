@@ -1738,6 +1738,7 @@ private fun platformReportSummary(providerId: String, state: MusicUiState): Stri
 
 private const val LICENSE_URL = "https://github.com/neta-is-ok/neta-car-music/blob/main/LICENSE"
 private const val NOTICES_URL = "https://github.com/neta-is-ok/neta-car-music/blob/main/THIRD_PARTY_NOTICES.md"
+private const val GPL3_URL = "https://www.gnu.org/licenses/gpl-3.0.html"
 
 /** 移植的 MIT 歌词动画模组：MIT 要求随副本附上版权行和许可原文，这里原样给出。 */
 private const val FOLIA_MIT_NOTICE =
@@ -1771,6 +1772,8 @@ fun LicensesScreen(onBack: () -> Unit, embedded: Boolean = false) {
         "Folia 社区歌词动画模组" to "巨幕、跳一跳移植自 tumuyan 的 cinerama 1.0.0、visualizer-jump 1.2.0（AGPL-3.0）；" +
             "MiSide 掉落、动感波光、黑胶唱片、星潮·银河分别移植自 miside-drop、wave-light、vinyl-disc、stardrift（MIT），" +
             "“按速度”换动画的思路来自 bpm-style-director（MIT）。全部用 Kotlin 原生重写，不运行、也不打包原模组的代码和素材。",
+        "Rush（shub39）" to "歌词动画“Rush”照 Rush 7.2.1 的歌词页用 Kotlin 改写：封面取色底、左对齐大字、景深模糊、逐字羽化扫光、间奏三点和六种背景。" +
+            "GPL-3.0-or-later，与本应用的 AGPL-3.0 代码按两份许可的第 13 条组合分发。不打包它的字体和图标。",
     )
     SettingsPage(SettingsSection.Licenses, embedded, onBack) {
         item(key = "app", contentType = "licenseCard") {
@@ -1796,6 +1799,22 @@ fun LicensesScreen(onBack: () -> Unit, embedded: Boolean = false) {
             contentType = { _, _ -> "license" },
         ) { index, (title, body) ->
             TextCard(title, body, index, thirdParty.size)
+        }
+        item(key = "gplHead", contentType = "sectionHeader") { SectionLabel("GPL-3.0 许可") }
+        item(key = "gpl", contentType = "licenseCard") {
+            TextCard(
+                title = "GNU General Public License v3.0（Rush 歌词样式）",
+                body = "Copyright (C) 2026 Shubham Gorai。改写的文件保留原文件头和版权行，注明修改内容和日期，按 GPL 第 3 版或更新版本分发。",
+                index = 0,
+                count = 1,
+                footer = {
+                    TextButton(onClick = { openUri(GPL3_URL) }, modifier = Modifier.tvFocusRing(CircleShape)) {
+                        Text("查看完整文本")
+                        Spacer(Modifier.width(6.dp))
+                        Icon(Icons.AutoMirrored.Filled.OpenInNew, null, Modifier.size(18.dp))
+                    }
+                },
+            )
         }
         item(key = "mitHead", contentType = "sectionHeader") { SectionLabel("MIT 许可原文") }
         item(key = "mit", contentType = "licenseCard") {
@@ -1824,9 +1843,10 @@ fun LicensesScreen(onBack: () -> Unit, embedded: Boolean = false) {
 @Composable
 fun PrivacyScreen(onBack: () -> Unit, embedded: Boolean = false) {
     val blocks = listOf(
-        "留在本机" to "最近播放、下载文件、播放进度和匹配缓存只保存在设备上。同步令牌使用 Android Keystore 加密，只保存在本机。",
+        "留在本机" to "最近播放、下载文件、播放进度和匹配缓存只保存在设备上。同步令牌和 WebDAV 密码使用 Android Keystore 加密，只保存在本机。",
+        "本地音乐" to "扫描只读音频文件，不读图片和视频，也不改动文件本身；封面缓存和扫描记录只存在本机，匹配结果也只存在本机，除非这首歌加进了已同步的歌单或喜欢（见下）。自动匹配时，有标签的歌把歌名和歌手发给已启用平台的搜索；没有标签的截取 3 秒、降到 8 kHz 单声道算成指纹，只把指纹发给网易云音乐的听歌识曲，音频本身不离开设备。加进已同步歌单或喜欢的本地歌，同步文件里只有这些：歌名、歌手、专辑、时长、文件名、文件指纹、文件所在设备的名字、云端副本的位置和匹配结果（匹配到哪个平台的哪首歌）。不包含文件路径、音频、歌词和封面图片，也不包含播放地址和 WebDAV 密码。音频文件只在你点了上传时才会传出去：选网易云盘就传到你自己的网易云盘，选 WebDAV 就传到你自己的服务器；传的是原文件，默认只在 Wi-Fi 下传。把只在本机的歌加进已同步的歌单时只会提醒一句，从不自动上传。QQ 音乐云盘只读取列表、播放已匹配的歌，不会往里上传。",
         "歌词背景音频分析" to "“律动”只分析 ExoPlayer 已解码、正在输出的 PCM，不读取麦克风，不申请录音权限，也不保存或上传音频及频谱。暂停或离开播放页后停止分析。",
-        "写入你选择的云端" to "启用同步后，自建歌单、收藏和平台账号 Cookie 会写入你的 GitHub Gist 或 Gitee 代码片段。Cookie 以明文保存，请勿公开文件链接；同步文件不包含同步令牌、播放地址和下载文件。",
+        "写入你选择的云端" to "启用同步后，自建歌单、收藏和平台账号 Cookie 会写入你的 GitHub Gist、Gitee 代码片段或 WebDAV 目录。Cookie 以明文保存，请勿公开文件链接或共享该目录；同步文件不包含同步令牌、WebDAV 密码、播放地址和下载文件。选 WebDAV 时，同步文件写在你的 WebDAV 目录里；WebDAV 密码只存在本机，不进同步文件。",
         "网络请求" to "音乐平台接口和同步服务直接请求对应平台；更新清单与 APK 通过随应用配置的 CDN 镜像获取，没有本项目自建中转服务器。汽水播放签名器默认使用 SodaM 的公共签名服务（可在设置里关闭或换成自建实例），会员整曲的取流请求会带着 Cookie 和完整请求头发给该服务。第三方仍会看到其服务所需的常规请求信息。扫码登录的二维码在本机生成。",
         "播放上报" to "开启“播放上报”（设置 › 播放上报，默认开）后，正在播放的曲目 ID、实际播放时长（暂停不计）、是否播完，以及切歌 / 暂停 / 换队列的原因会回传给该曲目所属的平台，用来让推荐流跟上你的口味；汽水还会把最近听过的曲目连时长一起带在推荐请求里。接入的平台有汽水音乐、网易云音乐、QQ音乐、酷我音乐和千千音乐；咪咕与 JOOX 公开面上没有可实现的上报接口。上报不带用户名、Cookie、播放地址或文件内容。关掉开关后一个请求都不发，已经发出去的服务端记录不会撤回。",
         "诊断信息" to "复制诊断只包含版本、设备型号、Android 版本、启用平台和最近错误；不包含 Cookie、令牌或完整播放 URL。",

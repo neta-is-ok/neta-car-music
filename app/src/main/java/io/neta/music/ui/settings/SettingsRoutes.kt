@@ -116,6 +116,12 @@ private fun SectionContent(
                 app.nav.navigate("syncConnect/$provider")
             }
         }
+        SettingsSection.LocalMusic -> LocalMusicSettingsScreen(
+            onBack = onBack,
+            embedded = embedded,
+            onOpenAccounts = { onOpen(SettingsSection.Accounts) },
+            onConnectWebDav = { app.nav.navigate(io.neta.music.ui.local.localWebDavRoute(app)) { launchSingleTop = true } },
+        )
         SettingsSection.Storage -> StorageContent(app, onBack, embedded, onCacheCleared)
         SettingsSection.About -> {
             val state by app.model.state.collectAsState()
@@ -187,8 +193,9 @@ private fun rememberSettingsOverview(app: AppNav, cacheTick: Int): SettingsOverv
     val cacheBytes by produceState(0L, app.model, state.current?.key, cacheTick) {
         value = app.model.mediaCacheSize()
     }
-    return remember(state, sync, update, equalizer, cacheBytes, downloadsBytes) {
-        settingsOverview(state, sync, update, equalizer, cacheBytes, downloadsBytes)
+    val localMusic = rememberLocalSettingsSummary()
+    return remember(state, sync, update, equalizer, cacheBytes, downloadsBytes, localMusic) {
+        settingsOverview(state, sync, update, equalizer, cacheBytes, downloadsBytes, localMusic)
     }
 }
 

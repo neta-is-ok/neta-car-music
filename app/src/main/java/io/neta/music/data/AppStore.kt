@@ -26,6 +26,14 @@ import androidx.room.Upsert
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import io.neta.music.aggregate.AggregationSettings
+import io.neta.music.data.local.LocalMusicSettings
+import io.neta.music.data.local.LocalTrackDao
+import io.neta.music.data.local.LocalRefDao
+import io.neta.music.data.local.LocalRefEntity
+import io.neta.music.data.local.LocalRemoteEntity
+import io.neta.music.data.local.LocalTrackEntity
+import io.neta.music.data.local.LocalUploadDao
+import io.neta.music.data.local.LocalUploadEntity
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -171,6 +179,7 @@ class SettingsStore(private val context: Context) {
     private val sodaSignerTokenKey = stringPreferencesKey("soda_signer_token")
     private val sodaSignerEnabledKey = booleanPreferencesKey("soda_signer_enabled")
     private val aggregationKey = stringPreferencesKey("aggregation")
+    private val localMusicKey = stringPreferencesKey("local_music")
     private val dynamicColorKey = booleanPreferencesKey("dynamic_color")
     private val reduceMotionKey = booleanPreferencesKey("reduce_motion")
     private val volumeNormalizationKey = booleanPreferencesKey("volume_normalization")
@@ -258,6 +267,9 @@ class SettingsStore(private val context: Context) {
             aggregation = runCatching {
                 json.decodeFromString<AggregationSettings>(values[aggregationKey] ?: "")
             }.getOrDefault(AggregationSettings()),
+            localMusic = runCatching {
+                json.decodeFromString<LocalMusicSettings>(values[localMusicKey] ?: "")
+            }.getOrDefault(LocalMusicSettings()),
             dynamicColor = values[dynamicColorKey] ?: false,
             reduceMotion = values[reduceMotionKey] ?: false,
             volumeNormalization = values[volumeNormalizationKey] ?: false,
@@ -529,6 +541,13 @@ class SettingsStore(private val context: Context) {
         it[aggregationKey] = json.encodeToString(value)
     }
 
+    /** 设置 › 本地音乐：在 edit 里读旧值再改，扫描写“上次扫描时间”和用户改开关同时发生也不会互相覆盖。 */
+    suspend fun localMusic(transform: (LocalMusicSettings) -> LocalMusicSettings) = context.dataStore.edit {
+        val current = runCatching { json.decodeFromString<LocalMusicSettings>(it[localMusicKey] ?: "") }
+            .getOrDefault(LocalMusicSettings())
+        it[localMusicKey] = json.encodeToString(transform(current))
+    }
+
     suspend fun saveEqualizer(value: EqualizerSettings) = context.dataStore.edit {
         it[equalizerEnabledKey] = value.enabled
         it[equalizerPresetKey] = value.presetId
@@ -592,6 +611,8 @@ data class AppSettings(
      */
     val thirdPartyLyrics: Boolean = true,
     val aggregation: AggregationSettings = AggregationSettings(),
+    /** 设置 › 本地音乐（扫描范围、匹配、播放兜底）。 */
+    val localMusic: LocalMusicSettings = LocalMusicSettings(),
     val dynamicColor: Boolean = false,
     val reduceMotion: Boolean = false,
     val volumeNormalization: Boolean = false,
@@ -673,8 +694,21 @@ data class SavedSongTombstone(
     @ColumnInfo(name = "deleted_at") val deletedAt: Long,
 )
 
+/** 下载记录状态。进行中的记录只活在当前进程里，进程重启后由 ViewModel 清理。 */
+const val DOWNLOAD_ACTIVE = "下载中"
+const val DOWNLOAD_FAILED = "下载失败"
+const val DOWNLOAD_DONE = "已完成"
+
 @Entity(tableName = "downloads")
-data class DownloadRecord(@PrimaryKey val key: String, val payload: String, val path: String, val state: String, val updatedAt: Long)
+data class DownloadRecord(
+    @PrimaryKey val key: String,
+    val payload: String,
+    val path: String,
+    val state: String,
+    val updatedAt: Long,
+    /** 失败原因，只对 [DOWNLOAD_FAILED] 有意义。 */
+    val error: String = "",
+)
 
 /** 切歌过渡的离线分析结果：节拍网格、响度、调性、首尾和段落，按曲目 key 存。 */
 @Entity(tableName = "automix_analysis")
@@ -977,8 +1011,12 @@ interface AggregateDao {
         MatchCacheEntity::class,
         TrackOverrideEntity::class,
         AutomixAnalysisEntity::class,
+        LocalTrackEntity::class,
+        LocalRefEntity::class,
+        LocalRemoteEntity::class,
+        LocalUploadEntity::class,
     ],
-    version = 8,
+    version = 12,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -986,6 +1024,9 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun library(): LibraryDao
     abstract fun sync(): SyncDao
     abstract fun aggregate(): AggregateDao
+    abstract fun localTracks(): LocalTrackDao
+    abstract fun localRefs(): LocalRefDao
+    abstract fun localUploads(): LocalUploadDao
 
     companion object {
         private val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -1226,8 +1267,140 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** 下载失败要把原因留在记录里，下载页才能提示为什么失败。 */
+        private val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `downloads` ADD COLUMN `error` TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
+        /**
+         * 本地音乐表。列全是 NOT NULL、不带 SQL 默认值：Room 打开库时按实体校验表结构，
+         * 实体没写默认值这里也不能写，否则校验对不上。云端（remote_*）几列先建好，上传落地时不必再迁移。
+         */
+        internal val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `local_tracks` (
+                        `local_id` TEXT NOT NULL,
+                        `uri` TEXT NOT NULL,
+                        `origin` TEXT NOT NULL,
+                        `display_name` TEXT NOT NULL,
+                        `relative_path` TEXT NOT NULL,
+                        `data_path` TEXT NOT NULL,
+                        `title` TEXT NOT NULL,
+                        `artist` TEXT NOT NULL,
+                        `album` TEXT NOT NULL,
+                        `duration_sec` INTEGER NOT NULL,
+                        `size` INTEGER NOT NULL,
+                        `mime_type` TEXT NOT NULL,
+                        `modified_at` INTEGER NOT NULL,
+                        `added_at` INTEGER NOT NULL,
+                        `bitrate` INTEGER NOT NULL,
+                        `sample_rate` INTEGER NOT NULL,
+                        `bits_per_sample` INTEGER NOT NULL,
+                        `tags_read` INTEGER NOT NULL,
+                        `cover_path` TEXT NOT NULL,
+                        `lrc_uri` TEXT NOT NULL,
+                        `missing` INTEGER NOT NULL,
+                        `match_provider` TEXT NOT NULL,
+                        `match_id` TEXT NOT NULL,
+                        `match_confidence` REAL NOT NULL,
+                        `match_method` TEXT NOT NULL,
+                        `matched_at` INTEGER NOT NULL,
+                        `match_payload` TEXT NOT NULL,
+                        `remote_provider` TEXT NOT NULL,
+                        `remote_id` TEXT NOT NULL,
+                        `remote_playable_id` TEXT NOT NULL,
+                        `remote_status` TEXT NOT NULL,
+                        `remote_updated_at` INTEGER NOT NULL,
+                        `updated_at` INTEGER NOT NULL,
+                        PRIMARY KEY(`local_id`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `idx_local_tracks_uri` ON `local_tracks` (`uri`)")
+            }
+        }
+
+        /**
+         * 本地歌的跨设备线索（同步 v3）：local_refs 记文件名、大小、文件所在设备、匹配；
+         * local_remotes 记云端副本，一首歌在几个云端各一行。只建新表，不碰已有数据。
+         */
+        internal val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `local_refs` (
+                        `local_id` TEXT NOT NULL,
+                        `file_name` TEXT NOT NULL,
+                        `file_size` INTEGER NOT NULL,
+                        `device` TEXT NOT NULL,
+                        `match_provider` TEXT NOT NULL,
+                        `match_id` TEXT NOT NULL,
+                        `match_confidence` REAL NOT NULL,
+                        `match_method` TEXT NOT NULL,
+                        `matched_at` INTEGER NOT NULL,
+                        `match_payload` TEXT NOT NULL,
+                        `updated_at` INTEGER NOT NULL,
+                        PRIMARY KEY(`local_id`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `local_remotes` (
+                        `local_id` TEXT NOT NULL,
+                        `provider` TEXT NOT NULL,
+                        `remote_id` TEXT NOT NULL,
+                        `playable_id` TEXT NOT NULL,
+                        `file_name` TEXT NOT NULL,
+                        `file_size` INTEGER NOT NULL,
+                        `status` TEXT NOT NULL,
+                        `uploaded_at` TEXT NOT NULL,
+                        `ext` TEXT NOT NULL,
+                        `md5` TEXT NOT NULL,
+                        `cloud_song_id` TEXT NOT NULL,
+                        `check_state` TEXT NOT NULL,
+                        `checked_at` INTEGER NOT NULL,
+                        `updated_at` INTEGER NOT NULL,
+                        PRIMARY KEY(`local_id`, `provider`)
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
+        /**
+         * 本地歌的上传队列（cloud_uploads）：进程被杀、重启后按它把还没传完的放回来。
+         * 只记身份、位置、状态和失败原因，不放音频；只建新表。
+         */
+        internal val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `cloud_uploads` (
+                        `local_id` TEXT NOT NULL,
+                        `provider` TEXT NOT NULL,
+                        `position` INTEGER NOT NULL,
+                        `state` TEXT NOT NULL,
+                        `error_kind` TEXT NOT NULL,
+                        `error_message` TEXT NOT NULL,
+                        `error_code` INTEGER NOT NULL,
+                        `attempts` INTEGER NOT NULL,
+                        PRIMARY KEY(`local_id`, `provider`)
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
+        internal val ALL_MIGRATIONS: Array<Migration>
+            get() = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12)
+
         fun create(context: Context) = Room.databaseBuilder(context, AppDatabase::class.java, "mymusic.db")
-            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
+            .addMigrations(*ALL_MIGRATIONS)
             .build()
     }
 }

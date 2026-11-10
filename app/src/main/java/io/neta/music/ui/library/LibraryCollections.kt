@@ -65,6 +65,9 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import io.neta.music.data.local.LOCAL_SOURCE
+import io.neta.music.data.DOWNLOAD_DONE
+import io.neta.music.data.DOWNLOAD_FAILED
 import io.neta.music.data.DownloadRecord
 import io.neta.music.data.SavedSong
 import io.neta.music.data.Song
@@ -83,6 +86,12 @@ import io.neta.music.ui.components.PageScaffold
 import io.neta.music.ui.components.SegmentGap
 import io.neta.music.ui.components.SkeletonRows
 import io.neta.music.ui.components.SongRow
+import io.neta.music.ui.local.LocalSongBadge
+import io.neta.music.ui.local.LocalUnplayableSheets
+import io.neta.music.ui.local.localSubtitle
+import io.neta.music.ui.local.rememberLocalCopies
+import io.neta.music.ui.local.rememberLocalDisplay
+import io.neta.music.ui.local.rememberLocalUnplayableHost
 import io.neta.music.ui.components.tvFocusRing
 import io.neta.music.ui.formatBytes
 import io.neta.music.ui.relativeTime
@@ -106,6 +115,11 @@ fun FavoritesScreen(
     onBrowse: () -> Unit,
 ) {
     val window = LocalAppWindow.current
+    // 本地歌：显示本机音乐库现在的信息，并标出这台设备上有没有文件
+    val localDisplay = rememberLocalDisplay()
+    val localCopies = rememberLocalCopies()
+    // 哪里都放不了的本地歌：点了打开“只在 X 上”面板（设计稿第 ⑧ 张）
+    val unplayable = rememberLocalUnplayableHost()
     val undo = rememberUndo()
     val settled = rememberSettled()
     val playFocus = remember { FocusRequester() }
@@ -167,14 +181,18 @@ fun FavoritesScreen(
             key = { _, it -> "fav:${it.first.key}" },
             contentType = { _, _ -> "song" },
         ) { index, (saved, song) ->
+            val display = localDisplay(song)
+            val local = localCopies(song)
             SongRow(
-                title = song.title,
-                subtitle = listOf(song.artist, sourceLabel(song)).filter { it.isNotBlank() }.joinToString(" · "),
-                cover = song.cover,
+                title = display.title,
+                subtitle = if (local != null) localSubtitle(display, local) else listOf(song.artist, sourceLabel(song)).filter { it.isNotBlank() }.joinToString(" · "),
+                cover = display.cover,
                 index = index,
                 count = shown.size,
-                onClick = { actions.play(song, songs) },
+                onClick = { if (!unplayable.intercept(song, local)) actions.play(song, songs) },
                 playing = state.current?.key == song.key,
+                dimmed = local?.gone == true,
+                badges = local?.let { copy -> { LocalSongBadge(copy) } },
                 trailing = {
                     IconButton(onClick = { unfavorite(saved, song) }, modifier = Modifier.tvFocusRing(CircleShape)) {
                         Icon(Icons.Filled.Favorite, "取消收藏“${song.title}”", tint = MaterialTheme.colorScheme.primary)
@@ -212,6 +230,12 @@ fun FavoritesScreen(
         }
     }
 
+    LocalUnplayableSheets(
+        host = unplayable,
+        removeLabel = "取消收藏",
+        removeSummary = "所有设备上都会取消",
+        onRemove = { song -> all.firstOrNull { it.second.key == song.key }?.let { (saved, item) -> unfavorite(saved, item) } },
+    )
     actionSong?.let { (saved, song) ->
         TrackActionsSheet(
             song = song,
@@ -226,6 +250,7 @@ fun FavoritesScreen(
             },
             onRemoveFromPlaylist = null,
             onDismiss = { actionSong = null },
+            onRematch = if (song.source == LOCAL_SOURCE) ({ actionSong = null; unplayable.rematch = song }) else null,
         )
     }
 }
@@ -266,6 +291,11 @@ fun HistoryScreen(
     onBack: () -> Unit,
 ) {
     val window = LocalAppWindow.current
+    // 本地歌：显示本机音乐库现在的信息，并标出这台设备上有没有文件
+    val localDisplay = rememberLocalDisplay()
+    val localCopies = rememberLocalCopies()
+    // 哪里都放不了的本地歌：点了打开“只在 X 上”面板（设计稿第 ⑧ 张）
+    val unplayable = rememberLocalUnplayableHost()
     val undo = rememberUndo()
     val settled = rememberSettled()
     val firstRow = remember { FocusRequester() }
@@ -285,15 +315,19 @@ fun HistoryScreen(
             key = { _, it -> "hist:${it.first.key}" },
             contentType = { _, _ -> "song" },
         ) { index, (saved, song) ->
+            val display = localDisplay(song)
+            val local = localCopies(song)
             SongRow(
-                title = song.title,
-                subtitle = song.artist.ifBlank { song.album },
-                cover = song.cover,
+                title = display.title,
+                subtitle = if (local != null) localSubtitle(display, local) else song.artist.ifBlank { song.album },
+                cover = display.cover,
                 index = index,
                 count = items.size,
-                onClick = { actions.play(song, queue) },
+                onClick = { if (!unplayable.intercept(song, local)) actions.play(song, queue) },
                 modifier = if (focusFirst && index == 0) Modifier.focusRequester(firstRow) else Modifier,
                 playing = state.current?.key == song.key,
+                dimmed = local?.gone == true,
+                badges = local?.let { copy -> { LocalSongBadge(copy) } },
                 trailing = {
                     Text(
                         timeLabel(saved.updatedAt),
@@ -378,6 +412,8 @@ fun HistoryScreen(
         }
     }
 
+    // 最近播放只在本机、没有逐条移除，面板里只给“找一首平台版本”
+    LocalUnplayableSheets(host = unplayable)
     actionSong?.let { song ->
         TrackActionsSheet(
             song = song,
@@ -392,6 +428,7 @@ fun HistoryScreen(
             },
             onRemoveFromPlaylist = null,
             onDismiss = { actionSong = null },
+            onRematch = if (song.source == LOCAL_SOURCE) ({ actionSong = null; unplayable.rematch = song }) else null,
         )
     }
 }
@@ -431,9 +468,10 @@ fun DownloadsScreen(
     }
     val done = prepared.sections.done
     val active = prepared.sections.active
+    val failed = prepared.sections.failed
     val freeBytes = prepared.freeBytes
     val doneBytes = prepared.sections.doneBytes
-    TvDefaultFocus(firstRow, done.isEmpty())
+    TvDefaultFocus(firstRow, done.isEmpty() && failed.isEmpty())
 
     val summary: LazyListScope.() -> Unit = {
         item(key = "usage", contentType = "usage") { StorageCard(done.size, doneBytes, cacheBytes, freeBytes) }
@@ -451,6 +489,39 @@ fun DownloadsScreen(
                 )
             }
         }
+        if (failed.isNotEmpty()) {
+            item(key = "failedHead", contentType = "header") { DayLabel("下载失败") }
+            itemsIndexed(failed, key = { _, it -> "failed:${it.record.key}" }, contentType = { _, _ -> "download" }) { index, item ->
+                SongRow(
+                    title = item.song.title,
+                    subtitle = listOf(
+                        item.song.artist.ifBlank { "未知歌手" },
+                        item.record.error.ifBlank { "下载失败" },
+                        "点按重试",
+                    ).joinToString(" · "),
+                    cover = item.song.cover,
+                    index = index,
+                    count = failed.size,
+                    // 失败记录点按直接重下；电视菜单键或行尾按钮删除这条记录
+                    onClick = { actions.download(item.song) },
+                    modifier = Modifier
+                        .then(if (index == 0) Modifier.focusRequester(firstRow) else Modifier)
+                        .onPreviewKeyEvent { event ->
+                            if (event.type == KeyEventType.KeyDown && event.key == Key.Menu) {
+                                deleting = item.record
+                                true
+                            } else {
+                                false
+                            }
+                        },
+                    trailing = {
+                        IconButton(onClick = { deleting = item.record }, modifier = Modifier.tvFocusRing(CircleShape)) {
+                            Icon(Icons.Outlined.Delete, "删除“${item.song.title}”的下载记录", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    },
+                )
+            }
+        }
     }
     val doneList: LazyListScope.() -> Unit = {
         item(key = "doneHead", contentType = "header") { DayLabel("已下载") }
@@ -465,7 +536,10 @@ fun DownloadsScreen(
             }
         }
         itemsIndexed(done, key = { _, it -> "done:${it.record.key}" }, contentType = { _, _ -> "download" }) { index, item ->
-            val detail = if (item.missing) "文件已不存在" else listOf(item.song.ext.uppercase(), formatBytes(item.size))
+            // 显示磁盘上文件的真实后缀：记录里的 Song 可能是下载前的搜索元数据，
+            // 平台标称无损、账号实际只拿到 mp3 时，两者会对不上。
+            val fileExt = File(item.record.path).extension.uppercase().ifBlank { item.song.ext.uppercase() }
+            val detail = if (item.missing) "文件已不存在" else listOf(fileExt, formatBytes(item.size))
                 .filter { it.isNotBlank() }.joinToString(" · ")
             SongRow(
                 title = item.song.title,
@@ -476,7 +550,7 @@ fun DownloadsScreen(
                 onClick = { actions.playDownload(item.record) },
                 // 电视：菜单键删除文件；其余设备用行尾的删除按钮
                 modifier = Modifier
-                    .then(if (index == 0) Modifier.focusRequester(firstRow) else Modifier)
+                    .then(if (index == 0 && failed.isEmpty()) Modifier.focusRequester(firstRow) else Modifier)
                     .onPreviewKeyEvent { event ->
                         if (event.type == KeyEventType.KeyDown && event.key == Key.Menu) {
                             deleting = item.record
@@ -495,7 +569,7 @@ fun DownloadsScreen(
         }
     }
 
-    PageScaffold(title = "下载", subtitle = if (window.isTv) "菜单键删除文件" else "", onBack = onBack) { padding ->
+    PageScaffold(title = "下载", subtitle = if (window.isTv) "失败项点按重试，菜单键删除" else "", onBack = onBack) { padding ->
         when {
             downloads.isEmpty() && !settled -> SkeletonRows(6, Modifier.padding(padding).padding(horizontal = window.gutter))
             downloads.isEmpty() -> CenteredEmpty(padding) {
@@ -519,8 +593,12 @@ fun DownloadsScreen(
 
     deleting?.let { record ->
         ConfirmDialog(
-            title = "删除下载文件",
-            message = "会删除本机上的音频文件，不影响收藏和歌单。",
+            title = if (record.state == DOWNLOAD_FAILED) "移除下载记录" else "删除下载文件",
+            message = if (record.state == DOWNLOAD_FAILED) {
+                "只移除这条失败记录，不影响收藏和歌单。"
+            } else {
+                "会删除本机上的音频文件，不影响收藏和歌单。"
+            },
             confirmLabel = "删除",
             danger = true,
             onConfirm = { actions.deleteDownload(record) },
@@ -554,7 +632,11 @@ internal class DownloadDiskStat(val size: Long, val exists: Boolean)
 
 internal class DownloadItem(val record: DownloadRecord, val song: Song, val size: Long, val missing: Boolean)
 
-internal class DownloadSections(val done: List<DownloadItem>, val active: List<DownloadItem>) {
+internal class DownloadSections(
+    val done: List<DownloadItem>,
+    val active: List<DownloadItem>,
+    val failed: List<DownloadItem> = emptyList(),
+) {
     val doneBytes: Long = done.sumOf { it.size }
 }
 
@@ -568,15 +650,18 @@ internal fun prepareDownloadSections(
 ): DownloadSections {
     val done = ArrayList<DownloadItem>()
     val active = ArrayList<DownloadItem>()
+    val failed = ArrayList<DownloadItem>()
     decoded.forEach { (record, song) ->
-        if (record.state == DOWNLOAD_DONE) {
-            val stat = disk[record.path]
-            done += DownloadItem(record, song, stat?.size ?: 0L, stat?.exists == false)
-        } else {
-            active += DownloadItem(record, song, 0L, false)
+        when (record.state) {
+            DOWNLOAD_DONE -> {
+                val stat = disk[record.path]
+                done += DownloadItem(record, song, stat?.size ?: 0L, stat?.exists == false)
+            }
+            DOWNLOAD_FAILED -> failed += DownloadItem(record, song, 0L, false)
+            else -> active += DownloadItem(record, song, 0L, false)
         }
     }
-    return DownloadSections(done, active)
+    return DownloadSections(done, active, failed)
 }
 
 /** 占用条：下载、播放缓存、剩余空间三段，图例用文字标出数值。 */

@@ -59,6 +59,8 @@ private val QQ_INFO = ProviderInfo(
     topListSongs = true,
     hotSongs = true,
     listeningModes = true,
+    playlistWrite = true,
+    playlistReorder = true,
 )
 
 class QQProvider : BaseNativeProvider(QQ_INFO) {
@@ -66,6 +68,8 @@ class QQProvider : BaseNativeProvider(QQ_INFO) {
     private val vipCache = ConcurrentHashMap<String, Boolean>()
     private val loginSessions = ConcurrentHashMap<String, QQLoginState>()
     private val volumeCache = ConcurrentHashMap<String, CachedVolume>()
+    /** dissid → (dirid, tid)；写歌单用，只在本进程内缓存。 */
+    private val dirIdCache = ConcurrentHashMap<String, Pair<Int, Int>>()
 
     override val supportsSearchPagination: Boolean = true
 
@@ -467,6 +471,171 @@ class QQProvider : BaseNativeProvider(QQ_INFO) {
         return CollectionResult(playlist, songs)
     }
 
+    override suspend fun playlistWritable(cookie: String, id: String): Boolean? {
+        if (cookie.isBlank()) return null
+        val (uin, _) = qqLogin(cookie)
+        if (uin == "0") return null
+        val playlistId = id.trim()
+        if (playlistId == QQ_FAVORITE_PLAYLIST_ID || playlistId.startsWith(QQ_PROFILE_DIR_PREFIX)) return true
+        for (page in 1..3) {
+            val items = try {
+                userPlaylists(cookie, page, 100)
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                return null
+            }
+            if (items.any { it.id == playlistId }) return true
+            if (items.size < 100) return false
+        }
+        return false
+    }
+
+    override suspend fun addPlaylistTracks(cookie: String, playlistId: String, songs: List<Song>) =
+        writePlaylist(cookie, playlistId, "AddSonglist", songs)
+
+    override suspend fun removePlaylistTracks(cookie: String, playlistId: String, songs: List<Song>) =
+        writePlaylist(cookie, playlistId, "DelSonglist", songs)
+
+    override suspend fun reorderPlaylistTracks(cookie: String, playlistId: String, songs: List<Song>) =
+        writePlaylist(cookie, playlistId, "SeqSonglist", songs)
+
+    private suspend fun writePlaylist(cookie: String, playlistId: String, method: String, songs: List<Song>) {
+        val (uin, _) = qqLogin(cookie)
+        val musicKey = firstNonEmpty(
+            cookieValue(cookie, "qm_keyst"),
+            cookieValue(cookie, "qqmusic_key"),
+        )
+        if (uin == "0" || musicKey.isBlank()) {
+            throw PlaylistWriteException("qq playlist write requires login", PlaylistWriteFailure.NotLoggedIn)
+        }
+        if (songs.isEmpty() && method != "SeqSonglist") return
+        val (dirId, tid) = resolveDirId(cookie, playlistId)
+            ?: throw PlaylistWriteException("qq playlist is not owned by this account", PlaylistWriteFailure.NotOwner)
+        val pairs = songs.map { qqSongPair(cookie, it) }
+        if (pairs.isEmpty()) return
+        val gtk = gtk33(musicKey)
+        val param = buildJsonObject {
+            put("dirId", dirId)
+            put("tid", tid)
+            put("bFmtUtf8", true)
+            if (method == "SeqSonglist") {
+                putJsonArray("v_songPair") {
+                    pairs.forEach { (songId, songType) ->
+                        add(buildJsonObject {
+                            put("songId", songId)
+                            put("songType", songType)
+                        })
+                    }
+                }
+            } else {
+                putJsonArray("v_songInfo") {
+                    pairs.forEach { (songId, songType) ->
+                        add(buildJsonObject {
+                            put("songId", songId)
+                            put("songType", songType)
+                        })
+                    }
+                }
+            }
+        }
+        val body = buildJsonObject {
+            putJsonObject("comm") {
+                put("ct", 24)
+                put("cv", 4747474)
+                put("platform", "yqq.json")
+                put("chid", "0")
+                put("uin", uin)
+                put("g_tk", gtk)
+                put("g_tk_new_20200303", gtk)
+                put("format", "json")
+                put("inCharset", "utf-8")
+                put("outCharset", "utf-8")
+                put("notice", 0)
+                put("need_new_code", 1)
+            }
+            putJsonObject("req_1") {
+                put("module", "music.musicasset.PlaylistDetailWrite")
+                put("method", method)
+                put("param", param)
+            }
+        }
+        val response = NativeHttp.postJson(
+            QQ_MUSICU_API,
+            body.toString(),
+            headers = mapOf("Referer" to "https://y.qq.com/"),
+            cookie = cookie,
+            randomIp = true,
+            userAgent = QQ_WINDOWS_USER_AGENT,
+        )
+        val root = runCatching { json.parseToJsonElement(response.body).jsonObject }.getOrNull()
+            ?: throw PlaylistWriteException("qq playlist write response is not json")
+        val node = (root["req_1"] as? JsonObject) ?: root
+        val code = node.intValue("code") ?: 0
+        val retCode = (node["data"] as? JsonObject)?.intValue("retCode") ?: node.intValue("retCode")
+        if (code != 0 || (retCode != null && retCode != 0)) {
+            val failure = when (retCode ?: code) {
+                80095 -> PlaylistWriteFailure.SongNotFound
+                else -> PlaylistWriteFailure.Other
+            }
+            throw PlaylistWriteException(
+                "qq playlist $method failed: code=$code retCode=$retCode",
+                failure,
+            )
+        }
+    }
+
+    private suspend fun qqSongPair(cookie: String, song: Song): Pair<Long, Int> {
+        val direct = firstNonEmpty(song.extra["song_id"].orEmpty(), song.extra["songid"].orEmpty())
+            .toLongOrNull()
+        if (direct != null && direct > 0) {
+            return direct to qqWriteType(song.extra["song_type"]?.toIntOrNull() ?: 0)
+        }
+        val mid = song.extra["songmid"].orEmpty().ifBlank { song.id }
+        if (mid.isNotBlank()) {
+            val resolved = runCatching { fetchSongDetail(cookie, mid) }.getOrNull()
+            val id = resolved?.extra?.get("song_id")?.toLongOrNull()
+            if (id != null && id > 0) return id to 0
+        }
+        throw PlaylistWriteException(
+            "qq song id not found: ${song.name.ifBlank { song.id }}",
+            PlaylistWriteFailure.SongNotFound,
+        )
+    }
+
+    private fun qqWriteType(type: Int): Int = when (type) {
+        0, 1 -> 0
+        5, 111, 112, 113 -> type
+        else -> 1
+    }
+
+    private suspend fun resolveDirId(cookie: String, playlistId: String): Pair<Int, Int>? {
+        dirIdCache[playlistId]?.let { return it }
+        val id = playlistId.trim()
+        val resolved = when {
+            id == QQ_FAVORITE_PLAYLIST_ID -> 201 to 0
+            id.startsWith(QQ_PROFILE_DIR_PREFIX) -> id.removePrefix(QQ_PROFILE_DIR_PREFIX)
+                .toIntOrNull()?.takeIf { it > 0 }?.let { it to 0 }
+            else -> {
+                var found: Pair<Int, Int>? = null
+                for (page in 1..3) {
+                    val items = userPlaylists(cookie, page, 100)
+                    val item = items.firstOrNull { it.id == id }
+                    if (item != null) {
+                        val dirId = item.extra["dirid"].orEmpty().toIntOrNull()
+                        if (dirId != null && dirId > 0) {
+                            found = dirId to (item.extra["tid"].orEmpty().toIntOrNull() ?: 0)
+                            break
+                        }
+                    }
+                    if (items.size < 100) break
+                }
+                found
+            }
+        } ?: return null
+        dirIdCache[playlistId] = resolved
+        return resolved
+    }
+
     override suspend fun recommendedPlaylists(cookie: String): List<Playlist> {
         val (uin, gtk) = qqLogin(cookie)
         val body = buildJsonObject {
@@ -783,6 +952,7 @@ class QQProvider : BaseNativeProvider(QQ_INFO) {
                     extra = mapOf(
                         "uin" to uin,
                         "dirid" to dirId,
+                        "tid" to item.tid.toString(),
                         "commit_time" to item.commitTime,
                     ),
                 )
@@ -1336,7 +1506,11 @@ class QQProvider : BaseNativeProvider(QQ_INFO) {
                 source = "qq",
                 cover = cover,
                 link = "https://y.qq.com/n/ryqq/songDetail/${item.songmid}",
-                extra = mapOf("songmid" to item.songmid),
+                extra = buildMap {
+                    put("songmid", item.songmid)
+                    if (item.songid > 0) put("song_id", item.songid.toString())
+                    if (item.type > 0) put("song_type", item.type.toString())
+                },
             )
         }
         return playlist to songs
@@ -1380,10 +1554,11 @@ class QQProvider : BaseNativeProvider(QQ_INFO) {
             source = "qq",
             cover = cover,
             link = "https://y.qq.com/n/ryqq/songDetail/${item.mid}",
-            extra = mapOf(
-                "songmid" to item.mid,
-                "song_id" to item.id.toString(),
-            ),
+            extra = buildMap {
+                put("songmid", item.mid)
+                put("song_id", item.id.toString())
+                if (item.type > 0) put("song_type", item.type.toString())
+            },
         )
     }
 
@@ -1690,7 +1865,10 @@ class QQProvider : BaseNativeProvider(QQ_INFO) {
             source = "qq",
             cover = cover,
             link = "https://y.qq.com/n/ryqq/songDetail/$songMid",
-            extra = mapOf("songmid" to songMid),
+            extra = buildMap {
+                put("songmid", songMid)
+                if (item.songid > 0) put("song_id", item.songid.toString())
+            },
         )
     }
 
@@ -1760,10 +1938,11 @@ class QQProvider : BaseNativeProvider(QQ_INFO) {
             source = "qq",
             cover = cover,
             link = "https://y.qq.com/n/ryqq/songDetail/${item.songmid}",
-            extra = mapOf(
-                "songmid" to item.songmid,
-                "song_id" to item.songid.toString(),
-            ),
+            extra = buildMap {
+                put("songmid", item.songmid)
+                put("song_id", item.songid.toString())
+                if (item.type > 0) put("song_type", item.type.toString())
+            },
         )
     }
 
@@ -2327,9 +2506,9 @@ class QQProvider : BaseNativeProvider(QQ_INFO) {
 
     /**
      * musicu 接口的登录态：uin 取 cookie 里的 QQ 号，g_tk 由 p_skey/skey 算。
-     * 拿不到登录态时返回匿名的 "0"/5381，行为和以前一致。
+     * 拿不到登录态时返回匿名的 "0"/5381，行为和以前一致。云盘接口（QqCloudApi）也用它，所以是 internal。
      */
-    private fun qqLogin(cookie: String): Pair<String, Int> {
+    internal fun qqLogin(cookie: String): Pair<String, Int> {
         val uin = normalizeQqUin(cookie)
         if (uin.isBlank() || !uin.all { it.isDigit() }) return "0" to 5381
         val skey = firstNonEmpty(cookieValue(cookie, "p_skey"), cookieValue(cookie, "skey"))
@@ -2630,6 +2809,7 @@ private data class QQSearchSong(val list: List<QQSearchItem> = emptyList())
 @Serializable
 private data class QQSearchItem(
     val songid: Long = 0,
+    val type: Int = 0,
     val songname: String = "",
     val songmid: String = "",
     val albumname: String = "",
@@ -2808,9 +2988,13 @@ private data class QQCdlist(
     val songlist: List<QQCdSong> = emptyList(),
 )
 
+private fun JsonObject.intValue(key: String): Int? =
+    (this[key] as? JsonPrimitive)?.content?.toIntOrNull()
+
 @Serializable
 private data class QQCdSong(
     val songid: Long = 0,
+    val type: Int = 0,
     val songname: String = "",
     val songmid: String = "",
     val albumname: String = "",
@@ -3170,6 +3354,7 @@ private data class QQDetailSong(
     val id: Long = 0,
     val name: String = "",
     val mid: String = "",
+    val type: Int = 0,
     val album: QQDetailAlbum = QQDetailAlbum(),
     val singer: List<QQSinger> = emptyList(),
     val interval: Int = 0,

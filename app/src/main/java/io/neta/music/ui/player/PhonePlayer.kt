@@ -25,7 +25,6 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -274,7 +273,7 @@ private fun PhoneTopBar(
             Modifier.fillMaxWidth().height(TopBarHeight).padding(horizontal = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(onClick = onClose) { Icon(Icons.Filled.KeyboardArrowDown, "收起播放页", tint = MaterialTheme.colorScheme.onSurface) }
+            PlayerBackButton(onClick = onClose)
             // 顶部始终是音源；定时只在工具栏里显示剩余时间
             Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
                 SourcePill(song, sourceProvider, sourceDetail, playbackMode, onOpenSource)
@@ -305,7 +304,7 @@ private fun PhoneShortTopBar(
             Modifier.fillMaxWidth().height(TopBarHeight).padding(horizontal = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(onClick = onClose) { Icon(Icons.Filled.KeyboardArrowDown, "收起播放页", tint = MaterialTheme.colorScheme.onSurface) }
+            PlayerBackButton(onClick = onClose)
             Spacer(Modifier.weight(1f))
             ToolbarLyricsButton(on = false, onToggle = onLyricsMode)
             ToolbarQueueButton(onOpenQueue)
@@ -950,7 +949,7 @@ private const val SlotThin = 6
 private const val SlotLyrics = 7
 private const val SlotCover = 8
 
-private val TopBarHeight = 52.dp
+private val TopBarHeight = 80.dp
 private val PreviewHeight = 56.dp
 private val CoverMax = 320.dp
 private val CoverMin = 200.dp

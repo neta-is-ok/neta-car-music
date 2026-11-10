@@ -514,14 +514,13 @@ fun LocalPlaylistScreen(
             load == null -> PlaylistLoading(embedded)
             playlist == null -> MissingPlaylist(onBack)
             embedded -> {
-                // 嵌在“我的”右栏：没有顶栏，头部是拼贴 + 标题
-                val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+                // 嵌在“我的”右栏：外壳已处理顶部导航和状态栏，头部是拼贴 + 标题
                 LazyColumn(
                     Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(
                         start = 28.dp,
                         end = 28.dp,
-                        top = top + 28.dp,
+                        top = 28.dp,
                         bottom = LocalOverlayPadding.current.calculateBottomPadding() + 24.dp,
                     ),
                     verticalArrangement = Arrangement.spacedBy(SegmentGap),
@@ -1126,7 +1125,7 @@ internal fun AddTracksSheet(
 @Composable
 private fun PlaylistLoading(embedded: Boolean) {
     val window = LocalAppWindow.current
-    val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val top = if (embedded) 0.dp else WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     Column(
         Modifier.fillMaxSize().padding(start = if (embedded) 28.dp else window.gutter, end = if (embedded) 28.dp else window.gutter, top = top + 72.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp),

@@ -159,10 +159,10 @@ private fun sourceSummary(state: MusicUiState): String {
 internal fun SettingsHomeScreen(
     overview: SettingsOverview,
     onOpen: (SettingsSection) -> Unit,
-    onBack: (() -> Unit)?,
 ) {
-    val gutter = LocalAppWindow.current.gutter
-    PageScaffold(title = "设置", subtitle = "设置即改即存，不需要保存按钮", onBack = onBack) { padding ->
+    val window = LocalAppWindow.current
+    val gutter = window.gutter
+    PageScaffold(title = "设置", subtitle = "设置即改即存，不需要保存按钮", showTitle = window.isTv) { padding ->
         LazyColumn(
             Modifier.fillMaxSize(),
             contentPadding = PaddingValues(
@@ -258,12 +258,14 @@ internal fun SettingsTwoPane(
                         bottom = bottom + 24.dp,
                     ),
             ) {
-                Text(
-                    "设置",
-                    Modifier.padding(start = 4.dp, bottom = 16.dp),
-                    style = if (tv) MaterialTheme.typography.headlineLarge else MaterialTheme.typography.displaySmall,
-                    fontWeight = FontWeight.Black,
-                )
+                if (tv) {
+                    Text(
+                        "设置",
+                        Modifier.padding(start = 4.dp, bottom = 16.dp),
+                        style = MaterialTheme.typography.headlineLarge,
+                        fontWeight = FontWeight.Black,
+                    )
+                }
                 SettingsGroups(
                     overview = overview,
                     selected = listed,

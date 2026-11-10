@@ -15,21 +15,20 @@ import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ShortNavigationBar
-import androidx.compose.material3.ShortNavigationBarItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
@@ -59,7 +58,6 @@ import io.neta.music.data.MiniPlayerTarget
 import io.neta.music.ui.Cover
 import io.neta.music.ui.MusicActions
 import io.neta.music.ui.MusicUiState
-import io.neta.music.ui.TopTab
 import io.neta.music.ui.openLabel
 import io.neta.music.ui.components.PlayButtonSize
 import io.neta.music.ui.components.PlayPauseButton
@@ -68,47 +66,28 @@ import io.neta.music.ui.components.sharedNowPlayingCover
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-private val NavBarHeight = 64.dp
 private val MiniHeight = 64.dp
 private val MiniGap = 8.dp
 
 /** 浮层总高度（不含系统导航栏），列表底部要让出这么多。 */
-fun phoneOverlayHeight(hasMini: Boolean): Dp = NavBarHeight + if (hasMini) MiniHeight + MiniGap * 2 else 0.dp
+fun phoneOverlayHeight(hasMini: Boolean): Dp = if (hasMini) MiniHeight + MiniGap * 2 else 0.dp
 
-/** 手机底部：悬浮迷你播放器 + 短导航栏，都从内容区取模糊背景。 */
+/** 窄屏底部只保留迷你播放器，页面导航统一放在顶部。 */
 @Composable
-fun PhoneBottomBar(
+fun PhoneMiniPlayerBar(
     state: MusicUiState,
     position: State<Long>,
-    selected: String,
     actions: MusicActions,
-    onSelect: (String) -> Unit,
     onOpenQueue: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier.fillMaxWidth()) {
+    Column(modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.navigationBars)) {
         AnimatedVisibility(
             visible = state.current != null,
             enter = slideInVertically { it } + fadeIn(),
             exit = slideOutVertically { it } + fadeOut(),
         ) {
             MiniPlayer(state, position, actions, onOpenQueue, Modifier.padding(horizontal = 12.dp, vertical = MiniGap))
-        }
-        val container = MaterialTheme.colorScheme.surfaceContainer
-        ShortNavigationBar(
-            modifier = Modifier.background(container),
-            containerColor = Color.Transparent,
-            windowInsets = WindowInsets.navigationBars,
-        ) {
-            TopTab.entries.forEach { tab ->
-                val on = selected == tab.route
-                ShortNavigationBarItem(
-                    selected = on,
-                    onClick = { onSelect(tab.route) },
-                    icon = { Icon(if (on) tab.selectedIcon else tab.icon, null) },
-                    label = { Text(tab.label) },
-                )
-            }
         }
     }
 }

@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
@@ -37,9 +38,11 @@ import androidx.compose.material.icons.automirrored.outlined.QueueMusic
 import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.outlined.Insights
 import androidx.compose.material.icons.outlined.LibraryMusic
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialExpressiveTheme
 import androidx.compose.material3.MaterialTheme
@@ -75,8 +78,8 @@ import kotlin.coroutines.cancellation.CancellationException
 import io.neta.music.data.TopList
 import io.neta.music.ui.adaptive.BottomPlayerBar
 import io.neta.music.ui.adaptive.BottomPlayerBarHeight
-import io.neta.music.ui.adaptive.PhoneBottomBar
-import io.neta.music.ui.adaptive.TabletNavRail
+import io.neta.music.ui.adaptive.HomeTopBar
+import io.neta.music.ui.adaptive.PhoneMiniPlayerBar
 import io.neta.music.ui.adaptive.phoneOverlayHeight
 import io.neta.music.ui.charts.discoverRoutes
 import io.neta.music.ui.components.LocalAppSnackbar
@@ -102,12 +105,13 @@ import io.neta.music.widget.WidgetTarget
 
 private const val EXIT_BACK_WINDOW_MS = 2_000L
 
-/** 顶层入口。设置不再占一格：手机在“我的”右上角，平板和电视在导航栏底部。 */
+/** 顶层入口。触摸设备共用顶部 Tab，并在右上角保留固定设置入口。 */
 enum class TopTab(val route: String, val label: String, val icon: ImageVector, val selectedIcon: ImageVector) {
     Charts("charts", "榜单", Icons.Outlined.Insights, Icons.Filled.Insights),
     Playlists("playlists", "歌单", Icons.AutoMirrored.Outlined.QueueMusic, Icons.AutoMirrored.Filled.QueueMusic),
     Search("search", "搜索", Icons.Outlined.Search, Icons.Filled.Search),
     Library("library", "我的", Icons.Outlined.LibraryMusic, Icons.Filled.LibraryMusic),
+    Settings("settings", "设置", Icons.Outlined.Settings, Icons.Filled.Settings),
 }
 
 /** 各功能的路由文件通过它拿到导航、ViewModel 和公共跳转。 */
@@ -158,10 +162,6 @@ fun MyMusicApp(model: MusicViewModel) {
     var timerOpen by rememberSaveable { mutableStateOf(false) }
 
     fun openTab(tab: String) {
-        // 设置不作为 tab 的恢复状态保存，否则切回榜单时会把刚退出的设置页恢复回来。
-        while (nav.currentDestination?.route?.startsWith("settings") == true) {
-            if (!nav.popBackStack()) break
-        }
         val currentTab = nav.currentBackStack.value.lastOrNull { entry ->
             TopTab.entries.any { it.route == entry.destination.route }
         }?.destination?.route
@@ -179,7 +179,11 @@ fun MyMusicApp(model: MusicViewModel) {
     }
 
     fun openSettings(route: String) {
-        nav.navigate(route) { launchSingleTop = true }
+        // 设置子页归到设置 Tab，避免切回原入口时恢复出设置页面。
+        openTab(TopTab.Settings.route)
+        if (route != TopTab.Settings.route) {
+            nav.navigate(route) { launchSingleTop = true }
+        }
     }
 
     val app = remember(nav, model, actions) { AppNav(nav, model, actions, ::openTab, ::openSettings) }
@@ -232,12 +236,12 @@ fun MyMusicApp(model: MusicViewModel) {
     }
 
     // 选中的入口跟着返回栈走：详情页这类不是入口的页面归到栈里它下面最近的入口，
-    // 从详情页进设置再返回时选中的回到原来的入口，不停在设置上
+    // 设置子页统一选中“设置”，其余详情归到栈中最近的顶层入口。
     val backStack by nav.currentBackStackEntryAsState()
     val route = backStack?.destination?.route
-    LaunchedEffect(route, window.isPhone) {
+    LaunchedEffect(route) {
         if (route == null) return@LaunchedEffect
-        val owner = nav.currentBackStack.value.asReversed().firstNotNullOfOrNull { tabOf(it.destination.route, window.isPhone) }
+        val owner = nav.currentBackStack.value.asReversed().firstNotNullOfOrNull { tabOf(it.destination.route) }
         if (owner != null) selectedTab = owner
     }
 
@@ -301,6 +305,9 @@ fun MyMusicApp(model: MusicViewModel) {
     // 队列海报墙在主界面之上、播放页之下；播放页可以盖在墙上，关掉回到墙
     val posterVisible = state.posterOpen && state.current != null
     val covered = playerVisible || posterVisible
+    val showHomeTopBar = !window.isTv && (
+        route == null || TopTab.entries.any { it.route == route } || route.startsWith("settings/")
+    )
     // 播放页还在组合里（含退场动画）：墙等它完全退场再拿遥控器焦点（播放页的焦点组退场途中不放焦点出去）
     val playerComposed = remember { mutableStateOf(false) }
     val enterSpec = MaterialTheme.motionScheme.defaultEffectsSpec<Float>()
@@ -327,23 +334,26 @@ fun MyMusicApp(model: MusicViewModel) {
                     .focusProperties { onEnter = { if (covered) cancelFocusChange() } }
                     .focusGroup(),
             ) {
-                when {
-                    window.isTv -> TvNavRail(
+                if (window.isTv) {
+                    TvNavRail(
                         selected = selectedTab,
                         current = state.current,
                         onSelect = ::openTab,
                         onSettings = { openSettings("settings") },
                         onOpenNowPlaying = actions::openNowPlaying,
                     )
-                    window.showRail -> ShellChromeTheme(pageChrome) {
-                        TabletNavRail(
+                }
+                Column(
+                    Modifier.weight(1f).fillMaxHeight()
+                        .then(if (showHomeTopBar) Modifier.windowInsetsPadding(WindowInsets.statusBars) else Modifier),
+                ) {
+                    if (showHomeTopBar) {
+                        HomeTopBar(
                             selected = selectedTab,
                             onSelect = ::openTab,
                             onSettings = { openSettings("settings") },
                         )
                     }
-                }
-                Column(Modifier.weight(1f).fillMaxHeight()) {
                     Box(Modifier.weight(1f)) {
                         CompositionLocalProvider(LocalOverlayPadding provides PaddingValues(bottom = overlayBottom)) {
                             NavHost(
@@ -370,12 +380,10 @@ fun MyMusicApp(model: MusicViewModel) {
                         ) {
                             CompositionLocalProvider(LocalCoverVisibilityScope provides this) {
                                 ShellChromeTheme(pageChrome) {
-                                    PhoneBottomBar(
+                                    PhoneMiniPlayerBar(
                                         state = state,
                                         position = position,
-                                        selected = selectedTab,
                                         actions = actions,
-                                        onSelect = ::openTab,
                                         onOpenQueue = { queueOpen = true },
                                     )
                                 }
@@ -520,18 +528,15 @@ fun TvExitBackHandler() {
     }
 }
 
-/**
- * 外壳的手机底栏、平板导航栏和底部播放条：整页深色的页面（详情页海报视图）登记了配色就换成它，否则沿用当前主题。
- * 始终包这一层，切换时里面的内容不重建；配色只在这里读，过渡期间只重组这一小块。
- */
-/** 返回栈里这一页对应的入口：顶层页就是它自己；设置在手机上归到“我的”，在平板和电视上是导航栏底部的“设置”；别的页面不算。 */
-private fun tabOf(route: String?, phone: Boolean): String? = when {
+/** 设置子页归到设置 Tab，其余详情由返回栈中的顶层入口确定。 */
+private fun tabOf(route: String?): String? = when {
     route == null -> null
     TopTab.entries.any { it.route == route } -> route
-    route.startsWith("settings") -> if (phone) TopTab.Library.route else "settings"
+    route.startsWith("settings/") -> TopTab.Settings.route
     else -> null
 }
 
+/** 底部播放控件沿用页面登记的配色；配色变化不重建控件。 */
 @Composable
 private fun ShellChromeTheme(page: PageChromeScheme, content: @Composable () -> Unit) {
     val scheme = page.scheme

@@ -189,9 +189,9 @@ fun MacrobenchmarkScope.openAndClosePlayer() {
     device.waitForIdle()
 }
 
-/** 定位导航而非页面内同名标题；电视兼容收起的图标语义与展开的文字。 */
+/** 顶部 Tab 不在视口时先横向滚动；电视兼容收起的图标语义与展开的文字。 */
 private fun MacrobenchmarkScope.openTab(tab: String) {
-    repeat(3) {
+    repeat(3) { attempt ->
         try {
             val textChoices = device.findObjects(By.text(tab).pkg(PACKAGE_NAME))
             val entry = if (isTv) {
@@ -199,12 +199,16 @@ private fun MacrobenchmarkScope.openTab(tab: String) {
                     .filter { it.visibleBounds.centerX() < device.displayWidth / 4 }
                     .minByOrNull { it.visibleBounds.centerX() }
             } else {
-                textChoices.maxByOrNull { it.visibleBounds.centerY() }
+                textChoices.minByOrNull { it.visibleBounds.centerY() }
             }
             if (entry != null) {
                 entry.click()
                 device.waitForIdle()
                 return
+            }
+            if (!isTv) {
+                val navigation = requireObject(By.desc("首页导航").pkg(PACKAGE_NAME), "顶部导航")
+                navigation.scroll(if (attempt == 0) Direction.LEFT else Direction.RIGHT, 1f)
             }
         } catch (_: StaleObjectException) {
             // 导航展开/收起时重新查找，不能持有旧节点继续点击。
@@ -236,7 +240,7 @@ fun MacrobenchmarkScope.visitTabs() {
                 if (!isTv) {
                     // 手机搜索首页自动打开系统键盘；电视使用应用内遥控器键盘。
                     device.pressBack()
-                    requireObject(By.text("榜单").pkg(PACKAGE_NAME), "收起键盘后的底部导航")
+                    requireObject(By.desc("首页导航").pkg(PACKAGE_NAME), "收起键盘后的顶部导航")
                 }
             }
             "榜单" -> {

@@ -28,9 +28,13 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialShapes
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -96,6 +100,22 @@ import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
+
+/** 播放页左上角返回键：64dp 圆形按钮，兼顾横屏触摸和窄屏操作。 */
+@Composable
+fun PlayerBackButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    FilledIconButton(
+        onClick = onClick,
+        modifier = modifier.size(64.dp).tvFocusRing(CircleShape),
+        shape = CircleShape,
+        colors = IconButtonDefaults.filledIconButtonColors(
+            containerColor = MaterialTheme.colorScheme.onSurface,
+            contentColor = MaterialTheme.colorScheme.surface,
+        ),
+    ) {
+        Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "收起播放页", Modifier.size(36.dp))
+    }
+}
 
 /** 控件 4 秒无操作后隐藏，播放和暂停一样。任意按下或按键唤醒；电视上唤醒的那一下不触发按键动作。 */
 @Stable

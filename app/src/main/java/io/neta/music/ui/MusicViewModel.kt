@@ -195,7 +195,7 @@ data class MusicUiState(
     val playlistsSource: String = "",
     /** 冷启动打开的顶层入口（TopTab.route），空表示还没读到设置。 */
     val startupTab: String = "",
-    val autoPlayOnLaunch: Boolean = false,
+    val autoPlayOnLaunch: Boolean = true,
     /** 歌单页上次用的浏览方式；还没读到设置时是默认的「推荐」。 */
     val playlistsMode: PlaylistMode = PlaylistMode.Recommend,
     /** 听歌模式页上次选的分组，空表示「全部」。 */

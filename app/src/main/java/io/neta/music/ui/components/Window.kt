@@ -26,7 +26,7 @@ import androidx.window.layout.WindowLayoutInfo
 import io.neta.music.ui.theme.LayoutMode
 import io.neta.music.ui.theme.isTelevision
 
-/** 设备形态。平板使用侧栏导航和底部播放条，电视单独走遥控器交互。 */
+/** 设备形态。触摸设备共用顶部导航，内容与播放控件按可用空间排布。 */
 enum class DeviceKind { Phone, Tablet, Tv }
 
 /**
@@ -54,7 +54,7 @@ data class Fold(
 enum class Posture { Normal, Flat, Book, Tabletop }
 
 /**
- * <600dp 使用手机布局；≥600dp 使用侧栏和底部播放条，不按宽度切换播放器位置。
+ * <600dp 使用紧凑内容与迷你播放器；≥600dp 使用底部播放条，不按宽度切换播放器位置。
  */
 @Immutable
 data class AppWindow(val kind: DeviceKind, val widthDp: Int, val heightDp: Int, val fold: Fold? = null) {
@@ -66,7 +66,6 @@ data class AppWindow(val kind: DeviceKind, val widthDp: Int, val heightDp: Int, 
      * 铰链天然把窗口分成上下两块，列表放上屏、详情放下屏（见 FoldRow），不用等宽度够 840。
      */
     val twoPane get() = isTv || widthDp >= 840 || (isTablet && fold != null && fold.occluding && !fold.vertical)
-    val showRail get() = !isPhone
     val showBottomPlayerBar get() = isTablet
     /** 内容区左右留白：手机 16dp，平板 24dp，电视 48dp（过扫描安全区）。 */
     val gutter: Dp get() = when (kind) {

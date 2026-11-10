@@ -36,7 +36,7 @@
 - 远端为 `git@github.com:neta-is-ok/neta-car-music.git`，默认应用更新仓库为 `neta-is-ok/neta-car-music`。
 - 提交使用简洁的中文 Conventional Commits，只包含本次改动。
 - 普通分支推送及 PR 只编译，不创建 Release。发布使用 `v<versionName>-<versionCode>` 标签，例如 `v0.0.1-1`；标签必须与源码版本完全一致。
-- APK 命名为 `neta-car-music-<versionName>-<versionCode>.apk`，并随 Release 发布 `update.json`、`update.apk.sha256` 和同一提交的源码包。
+- APK 命名为 `neta-car-music-<versionName>-<versionCode>.apk`，并随 Release 发布 `update.json` 和 `update.apk.sha256`。对应源码通过版本标签及 GitHub 自动生成的 Source code 归档提供，不额外生成或上传源码包。
 - Release 必须使用稳定专用签名；本地密钥放在当前仓库根目录 `keystore.jks`，配置放在 `signing.properties`，两者均忽略、不提交，不放到仓库外的配置目录。CI 通过 GitHub Secrets 提供签名，不回退到 debug 签名发布。
 - 应用更新只指向构建时配置的本项目 GitHub 仓库。未配置仓库时不请求上游更新，手动检查应显示“尚未配置更新仓库”。
 - 更新清单与 APK 使用 `app/src/main/assets/cdn-providers.json` 中的 CDN 镜像；该文件初始来自 Netamade，保留独立副本供本仓库构建。

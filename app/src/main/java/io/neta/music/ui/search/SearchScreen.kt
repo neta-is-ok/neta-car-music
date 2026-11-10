@@ -562,7 +562,7 @@ private fun TouchSearch(
             }
         }
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
-            // 按内容区实际宽度分栏，扣除导航侧栏和页面留白。
+            // 按内容区实际宽度分栏，扣除页面留白。
             // 折叠屏书本姿态内容区不到 760dp（Pixel Fold 745dp），但折痕本来就分出了两页：最佳匹配放左页，结果放右页
             val twoPane = !window.isPhone && (maxWidth >= 760.dp || window.posture == Posture.Book)
             val listWidth = maxWidth - window.gutter * 2

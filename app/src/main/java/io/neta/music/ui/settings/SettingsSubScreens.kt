@@ -167,7 +167,7 @@ private fun contrastLabel(value: Float): String = when {
 }
 
 /**
- * 外观：文字、侧边栏、歌词字号与配色。字号较大时选项自动换行。
+ * 外观：文字、歌词字号与配色。字号较大时选项自动换行。
  */
 @Composable
 fun AppearanceSettingsScreen(
@@ -186,17 +186,19 @@ fun AppearanceSettingsScreen(
         item(key = "fontScale", contentType = "fontScaleOptions") {
             Column {
                 FontScaleOptions(appearance.fontScale, actions::setFontScale)
-                SettingsNote("默认更大（130%）。侧边栏和歌词可在下方单独调整。")
+                SettingsNote("默认更大（130%），首页顶部 Tab 同步放大。歌词可在下方单独调整。")
             }
         }
-        item(key = "sidebarHead", contentType = "sectionHeader") { SectionLabel("左侧侧边栏") }
-        item(key = "sidebarIcons", contentType = "sizeSlider") {
-            AppearanceSizeSlider("图标大小", appearance.sidebarIconDp, 24..64, 4, "dp", actions::setSidebarIconSize)
+        if (tv) {
+            item(key = "sidebarHead", contentType = "sectionHeader") { SectionLabel("电视导航栏") }
+            item(key = "sidebarIcons", contentType = "sizeSlider") {
+                AppearanceSizeSlider("图标大小", appearance.sidebarIconDp, 24..64, 4, "dp", actions::setSidebarIconSize)
+            }
+            item(key = "sidebarText", contentType = "sizeSlider") {
+                AppearanceSizeSlider("导航文字大小", appearance.sidebarTextSp, 12..32, 2, "sp", actions::setSidebarTextSize)
+            }
+            item(key = "sidebarNote", contentType = "note") { SettingsNote("电视导航栏文字不随应用字号变化。") }
         }
-        item(key = "sidebarText", contentType = "sizeSlider") {
-            AppearanceSizeSlider("侧边栏文字大小", appearance.sidebarTextSp, 12..32, 2, "sp", actions::setSidebarTextSize)
-        }
-        item(key = "sidebarNote", contentType = "note") { SettingsNote("侧边栏文字不随应用字号变化。") }
         item(key = "lyricsFontHead", contentType = "sectionHeader") { SectionLabel("歌词文字大小") }
         item(key = "lyricsFontMode", contentType = "toggleGroup") {
             ConnectedToggleGroup(
@@ -278,9 +280,9 @@ fun AppearanceSettingsScreen(
 }
 
 private fun layoutModeHint(mode: LayoutMode): String = when (mode) {
-    LayoutMode.Auto -> "跟随设备：按窗口宽度和电视识别切换，屏幕方向保持系统默认。"
-    LayoutMode.Phone -> "固定竖屏，使用底部导航和迷你播放器。"
-    LayoutMode.Tablet -> "固定横屏，使用侧边导航和底部播放条；窗口较宽时内容可分成两栏。"
+    LayoutMode.Auto -> "手机、平板与车机共用顶部导航；内容按窗口宽度排布，屏幕方向保持系统默认。电视保留遥控器布局。"
+    LayoutMode.Phone -> "固定竖屏，使用顶部导航和迷你播放器。"
+    LayoutMode.Tablet -> "固定横屏，使用顶部导航和底部播放条；窗口较宽时内容可分成两栏。"
     LayoutMode.Tv -> "固定横屏，使用遥控器焦点导航和大留白，配色固定深色。"
 }
 

@@ -129,7 +129,7 @@ import java.util.Locale
 private const val CAROUSEL_COUNT = 5
 
 /**
- * 榜单。手机：大标题 + 平台 chip + 多宽度轮播 + 榜首 + 更多榜单；
+ * 榜单。手机：平台 chip + 多宽度轮播 + 榜首 + 更多榜单；
  * 平板：轮播变宽，榜单曲目在左、更多榜单在右；电视：跟随焦点换封面和配色的 Hero + 横向卡片行。
  */
 @Composable
@@ -178,6 +178,7 @@ private fun PhoneCharts(
     PageScaffold(
         title = "榜单",
         subtitle = chartsSubtitle(charts),
+        showTitle = false,
         actions = {
             IconButton(
                 onClick = { selection.start() },

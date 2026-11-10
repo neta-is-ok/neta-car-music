@@ -52,8 +52,6 @@ private fun SettingsRoute(app: AppNav, section: SettingsSection?) {
         section == null -> SettingsHomeScreen(
             overview = rememberSettingsOverview(app, cacheTick),
             onOpen = { app.nav.navigate(it.route) { launchSingleTop = true } },
-            // 手机从“我的”右上角进来，要能返回；平板的设置在导航栏上，是顶层目的地
-            onBack = if (window.isPhone) app::back else null,
         )
         else -> SectionContent(
             app = app,

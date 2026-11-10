@@ -32,7 +32,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipNext
@@ -184,7 +183,7 @@ internal fun WidePlayer(
                 {
                     if (showDefault) {
                         WideGuard(idle, lyricsMode, Modifier.graphicsLayer { alpha = defaultChrome() }) {
-                            IconButton(onClick = onClose) { Icon(Icons.Filled.KeyboardArrowDown, "收起播放页", tint = MaterialTheme.colorScheme.onSurface) }
+                            PlayerBackButton(onClick = onClose)
                         }
                     }
                 },

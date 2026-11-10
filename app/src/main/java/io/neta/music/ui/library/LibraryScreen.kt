@@ -16,8 +16,6 @@ import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -25,9 +23,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -50,7 +46,6 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SyncProblem
 import androidx.compose.material.icons.outlined.Cloud
 import androidx.compose.material3.AlertDialog
@@ -161,9 +156,8 @@ import java.io.File
 import java.time.LocalDate
 import java.time.ZoneId
 
-/** “我的”页面的跳转。设置入口只在手机上出现（平板和电视在导航栏底部）。 */
+/** “我的”页面的内容入口；设置由应用外壳提供。 */
 class LibraryNav(
-    val openSettings: () -> Unit,
     val openSync: () -> Unit,
     val openPlaylist: (String) -> Unit,
     val openFavorites: () -> Unit,
@@ -252,13 +246,10 @@ private fun PhoneLibrary(
         PageScaffold(
             title = "我的",
             subtitle = syncHeadline(sync),
+            showTitle = false,
             actions = {
                 SyncCloudButton(sync, nav.openSync)
-                if (phone) {
-                    IconButton(onClick = nav.openSettings, modifier = Modifier.tvFocusRing(CircleShape)) {
-                        Icon(Icons.Filled.Settings, "设置")
-                    }
-                } else {
+                if (!phone) {
                     NewPlaylistSplitButton(menu, Modifier.padding(end = 8.dp))
                 }
             },
@@ -385,7 +376,6 @@ private fun TabletLibrary(
     SideEffect(selected) { if (selected != null && selected != selectedId) selectedId = selected }
     val settled = rememberSettled()
     val conflictIds = sync.conflicts.map { it.playlistId }.toSet()
-    val top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val bottom = LocalOverlayPadding.current.calculateBottomPadding()
     // 书本姿态、双竖：列表收到折痕为止，详情在折痕另一侧；双横：列表在上屏、详情在下屏
     FoldRow(
@@ -394,13 +384,12 @@ private fun TabletLibrary(
         start = {
             LazyColumn(
                 Modifier.fillMaxHeight(),
-                contentPadding = PaddingValues(start = 24.dp, end = 16.dp, top = top + 28.dp, bottom = LocalFoldPane.current.bottom(bottom + 24.dp)),
+                contentPadding = PaddingValues(start = 24.dp, end = 16.dp, top = 12.dp, bottom = LocalFoldPane.current.bottom(bottom + 24.dp)),
                 verticalArrangement = Arrangement.spacedBy(SegmentGap),
             ) {
                 item(key = "head", contentType = "header") {
                     Row(Modifier.fillMaxWidth().padding(bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
-                            Text("我的", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.ExtraBold)
                             Text(
                                 syncHeadline(sync),
                                 style = MaterialTheme.typography.bodyMedium,

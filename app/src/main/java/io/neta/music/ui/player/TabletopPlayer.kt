@@ -23,7 +23,6 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -210,7 +209,7 @@ private fun TabletopTopBar(
         Modifier.fillMaxWidth().height(TabletopBarHeight).padding(horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        IconButton(onClick = onClose) { Icon(Icons.Filled.KeyboardArrowDown, "收起播放页", tint = MaterialTheme.colorScheme.onSurface) }
+        PlayerBackButton(onClick = onClose)
         Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
             SourcePill(song, sourceProvider, sourceDetail, playbackMode, onOpenSource)
         }
@@ -510,7 +509,7 @@ private const val SlotSeek = 4
 private const val SlotGroup = 5
 private const val SlotToolbar = 6
 
-private val TabletopBarHeight = 52.dp
+private val TabletopBarHeight = 80.dp
 private val TabletopMetaHeight = 56.dp
 private val TabletopToolbarHeight = 60.dp
 private val TabletopBlockMax = 560.dp

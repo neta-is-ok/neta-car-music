@@ -20,7 +20,7 @@ import kotlinx.coroutines.launch
 
 /**
  * 我的：本机音乐库、喜欢 / 最近 / 下载、自建歌单和同步。
- * 手机上设置入口在“我的”右上角；平板和电视在导航栏底部。
+ * 手机、平板与车机的设置入口由外壳统一放在右上角。
  */
 fun NavGraphBuilder.libraryRoutes(app: AppNav) {
     composable("library") {
@@ -36,7 +36,6 @@ fun NavGraphBuilder.libraryRoutes(app: AppNav) {
         val soda by app.model.sodaWelfare.collectAsState()
         val nav = remember(app) {
             LibraryNav(
-                openSettings = { app.openSettings("settings") },
                 openSync = { app.nav.navigate("syncCenter") },
                 openPlaylist = { id -> app.nav.navigate("localPlaylist/$id") },
                 openFavorites = { app.nav.navigate("favorites") },

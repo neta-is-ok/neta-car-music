@@ -253,7 +253,7 @@ class SettingsStore(private val context: Context) {
             chartsSource = values[chartsSourceKey] ?: "",
             playlistsSource = values[playlistsSourceKey] ?: "",
             startupTab = values[startupTabKey] ?: "",
-            autoPlayOnLaunch = values[autoPlayOnLaunchKey] ?: false,
+            autoPlayOnLaunch = values[autoPlayOnLaunchKey] ?: true,
             playlistsMode = values[playlistsModeKey] ?: "",
             listenGroup = values[listenGroupKey] ?: "",
             theme = values[themeKey] ?: "system",
@@ -588,8 +588,8 @@ data class AppSettings(
     val playlistsSource: String = "",
     /** 冷启动打开的顶层入口（TopTab.route），空表示默认「榜单」。 */
     val startupTab: String = "",
-    /** 打开应用时从上次的歌曲和进度续播；默认关闭。 */
-    val autoPlayOnLaunch: Boolean = false,
+    /** 打开应用时从上次的歌曲和进度续播；默认开启。 */
+    val autoPlayOnLaunch: Boolean = true,
     /** 歌单页上次用的浏览方式（PlaylistMode 名字），空表示默认「推荐」。 */
     val playlistsMode: String = "",
     /** 听歌模式页上次选的分组，空表示「全部」。 */

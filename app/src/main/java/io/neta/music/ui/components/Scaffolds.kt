@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
@@ -39,6 +40,7 @@ import androidx.compose.ui.unit.dp
 /**
  * 页面骨架。手机和平板用 Large flexible app bar（带副标题，滚动后收成小标题）；
  * 电视没有滚动收起，用一行大标题，右侧放操作。
+ * 首页由外壳提供 Tab 标题，showTitle=false 时这里只保留状态与页面操作。
  * content 收到的 PaddingValues 包含顶栏、系统栏和底部浮层（迷你播放器、导航栏），列表直接用作 contentPadding。
  * 左右留白不在里面：横向滚动的卡片行要贴边，其余内容自己加 LocalAppWindow.current.gutter。
  */
@@ -49,6 +51,7 @@ fun PageScaffold(
     subtitle: String = "",
     onBack: (() -> Unit)? = null,
     large: Boolean = true,
+    showTitle: Boolean = true,
     actions: @Composable RowScope.() -> Unit = {},
     floatingActionButton: @Composable () -> Unit = {},
     content: @Composable (PaddingValues) -> Unit,
@@ -64,7 +67,7 @@ fun PageScaffold(
         }
         return
     }
-    val scroll = if (large) {
+    val scroll = if (large && showTitle) {
         TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     } else {
         TopAppBarDefaults.pinnedScrollBehavior()
@@ -86,7 +89,23 @@ fun PageScaffold(
         contentWindowInsets = WindowInsets(0),
         floatingActionButton = floatingActionButton,
         topBar = {
-            if (large) {
+            if (!showTitle) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = window.gutter).heightIn(min = 56.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text(
+                        subtitle,
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    actions()
+                }
+            } else if (large) {
                 LargeFlexibleTopAppBar(
                     // M3 顶栏不给标题加 heading，读屏按标题跳转时找不到页面标题
                     title = { Text(title, Modifier.semantics { heading() }, maxLines = 1, overflow = TextOverflow.Ellipsis) },

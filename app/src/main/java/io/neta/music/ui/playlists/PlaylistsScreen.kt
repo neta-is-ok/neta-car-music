@@ -185,6 +185,7 @@ private fun PhonePlaylists(
     PageScaffold(
         title = "歌单",
         subtitle = playlistsSubtitle(playlists),
+        showTitle = false,
         actions = {
             if (window.isTablet && (playlists.canCategorize || playlists.canListen)) {
                 ModeToggle(playlists, actions::setPlaylistMode, Modifier.width(if (playlists.canListen) 400.dp else 240.dp))

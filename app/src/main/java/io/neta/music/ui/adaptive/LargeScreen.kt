@@ -2,9 +2,6 @@ package io.neta.music.ui.adaptive
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -12,7 +9,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -25,101 +21,33 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.OpenInFull
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
-import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.State
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import io.neta.music.aggregate.PlaybackMode
 import io.neta.music.ui.Cover
 import io.neta.music.ui.MusicActions
 import io.neta.music.ui.MusicUiState
-import io.neta.music.ui.TopTab
 import io.neta.music.ui.openLabel
 import io.neta.music.ui.components.LocalAppWindow
 import io.neta.music.ui.components.PlayButtonSize
 import io.neta.music.ui.components.PlayPauseButton
 import io.neta.music.ui.components.WavySeekBar
-import io.neta.music.ui.theme.LocalAppearance
-import io.neta.music.ui.theme.systemTextDensity
-
-/** 平板导航栏：四个入口在上，设置在底部。FAB 菜单不和导航栏同屏，新建入口改在页面里用 Split button。 */
-@Composable
-fun TabletNavRail(selected: String, onSelect: (String) -> Unit, onSettings: () -> Unit) {
-    val appearance = LocalAppearance.current
-    val density = systemTextDensity()
-    val textWidth = with(density) { (appearance.sidebarTextSp * 2).sp.toDp() } + 32.dp
-    val railWidth = maxOf(112.dp, appearance.sidebarIconDp.dp + 32.dp, textWidth)
-    NavigationRail(
-        modifier = Modifier.fillMaxHeight().width(railWidth),
-        containerColor = MaterialTheme.colorScheme.surface,
-    ) {
-        Spacer(Modifier.height(12.dp))
-        Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-            TopTab.entries.forEach { tab ->
-                val on = selected == tab.route
-                TabletRailItem(tab.label, if (on) tab.selectedIcon else tab.icon, on) { onSelect(tab.route) }
-            }
-        }
-        val on = selected == "settings"
-        TabletRailItem("设置", if (on) Icons.Filled.Settings else Icons.Outlined.Settings, on, onSettings)
-        Spacer(Modifier.height(8.dp))
-    }
-}
-
-@Composable
-private fun TabletRailItem(label: String, icon: ImageVector, selected: Boolean, onClick: () -> Unit) {
-    val appearance = LocalAppearance.current
-    val density = systemTextDensity()
-    val scheme = MaterialTheme.colorScheme
-    CompositionLocalProvider(LocalDensity provides density) {
-        Column(
-            Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
-                .selectable(selected = selected, role = Role.Tab, onClick = onClick)
-                .padding(horizontal = 8.dp, vertical = 8.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Box(
-                Modifier.size(appearance.sidebarIconDp.dp + 24.dp, appearance.sidebarIconDp.dp + 16.dp)
-                    .background(if (selected) scheme.secondaryContainer else Color.Transparent, RoundedCornerShape(50)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(icon, null, Modifier.size(appearance.sidebarIconDp.dp), tint = if (selected) scheme.onSecondaryContainer else scheme.onSurfaceVariant)
-            }
-            Text(
-                label,
-                style = MaterialTheme.typography.labelLarge,
-                fontSize = appearance.sidebarTextSp.sp,
-                lineHeight = (appearance.sidebarTextSp * 1.25f).sp,
-                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                color = if (selected) scheme.onSecondaryContainer else scheme.onSurfaceVariant,
-                maxLines = 1,
-            )
-        }
-    }
-}
 
 /** 底部播放条高度（不含系统导航栏），Snackbar 要让开这么多。 */
 val BottomPlayerBarHeight = 88.dp
@@ -151,7 +79,7 @@ fun BottomPlayerBar(
     }
     val song = state.current ?: return
     val container = MaterialTheme.colorScheme.surfaceContainer
-    // 播放条横跨侧栏右边的整块内容区，折痕要按它自己的位置量（扣掉左右留白后）
+    // 播放条横跨内容区，折痕按它自己的位置测量（扣掉左右留白后）
     val anchor = rememberFoldAnchor()
     // 只在竖折痕（书本、双竖）上分两段；左段放不下封面、歌名和三个按钮时当没有折痕。
     // 没有折痕时不读 anchor：平板首次摆放后不必为它多重组一次

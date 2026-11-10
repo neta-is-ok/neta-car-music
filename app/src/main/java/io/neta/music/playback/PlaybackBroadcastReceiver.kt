@@ -5,7 +5,9 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.os.ResultReceiver
 import androidx.core.content.ContextCompat
+import androidx.core.content.IntentCompat
 import io.neta.music.MyMusicApp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
@@ -22,14 +24,15 @@ import org.json.JSONObject
  * - play：keyword 搜索后播放首个结果，可带 source 指定平台；也可传 source + song_id，
  *   或 song_json（data.Song 的 JSON，保留平台需要的 extra 等信息）。ID 方式可带 title / artist。
  *
- * 结果广播默认 action = io.neta.music.action.RESULT；reply_action / reply_package 可指定回传目标。
+ * 可选 result_receiver（平台 ResultReceiver）直接回传结果；未提供时仍发普通结果广播，
+ * 默认 action = io.neta.music.action.RESULT，reply_action / reply_package 可指定回传目标。
  * request_id 原样回传。每次结果含 command、success、status（completed / error / accepted）；
  * 状态含 has_song、song_id、source、title、artist、favorite、mode、repeat_mode、shuffle、playing。
  * 没有当前歌曲时 has_song=false，不带歌曲信息和 favorite。失败含 message。
  *
  * 有序广播同时以 resultExtras 和 JSON resultData 返回，resultCode=-1 成功、0 失败。
- * play 的有序结果为 accepted；联网及播放结果稍后以结果广播返回 completed / error。
- * 接收方应先动态注册结果接收器；reply_package 也可用于发往声明在清单中的接收器。
+ * play 的有序结果为 accepted；联网及播放结果稍后通过相同回调或结果广播返回 completed / error。
+ * 使用广播回传时应先注册结果接收器；reply_package 也可用于发往声明在清单中的接收器。
  *
  * 示例：adb shell am broadcast -a io.neta.music.action.CONTROL -p io.neta.music
  * --es command set_mode --es mode one
@@ -74,6 +77,7 @@ class PlaybackBroadcastReceiver : BroadcastReceiver() {
 internal object PlaybackBroadcast {
     const val ACTION_CONTROL = "io.neta.music.action.CONTROL"
     const val ACTION_RESULT = "io.neta.music.action.RESULT"
+    private const val EXTRA_RESULT_RECEIVER = "result_receiver"
     suspend fun execute(app: MyMusicApp, intent: Intent): Bundle = PlaybackControl.execute(
         app,
         PlaybackControlRequest(
@@ -91,6 +95,15 @@ internal object PlaybackBroadcast {
     fun reply(context: Context, request: Intent, result: Bundle) {
         result.putString("command", request.getStringExtra("command").orEmpty())
         request.getStringExtra("request_id")?.let { result.putString("request_id", it) }
+        val receiver = IntentCompat.getParcelableExtra(request, EXTRA_RESULT_RECEIVER, ResultReceiver::class.java)
+        if (receiver != null) {
+            // 回调 Binder 随完整请求转交播放服务；只回调用方，不依赖其用户、包名或动态接收器。
+            receiver.send(
+                if (result.getBoolean("success")) Activity.RESULT_OK else Activity.RESULT_CANCELED,
+                Bundle(result),
+            )
+            return
+        }
         context.sendBroadcast(Intent(request.getStringExtra("reply_action")?.takeIf { it.isNotBlank() } ?: ACTION_RESULT)
             .setPackage(request.getStringExtra("reply_package")?.takeIf { it.isNotBlank() })
             .putExtras(result))

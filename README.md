@@ -31,6 +31,14 @@ APK 输出到 `app/build/outputs/apk/debug/neta-car-music-0.0.5-5.apk`。SDK 与
 
 两份 APK 的内容和签名相同，文件名随 `version.properties` 自动变化。中文名副本只在配置 Release 签名后生成，不影响原有 Debug 构建或英文发布包。密钥和密码不入库，开发约定见 [AGENTS.md](AGENTS.md)。
 
+## 对外控制
+
+向包 `io.neta.music` 发送 `io.neta.music.action.CONTROL` 广播，通过字符串 `command` 点歌、收藏或切换播放模式；参数及结果字段见 [PlaybackBroadcastReceiver](app/src/main/java/io/neta/music/playback/PlaybackBroadcastReceiver.kt) 的接口说明。
+
+- Android 调用方可携带平台 `android.os.ResultReceiver` 参数 `result_receiver`，结果直接回到发起进程，无需注册结果广播接收器。
+- 点歌先返回 `accepted`，搜索及提交播放器后返回 `completed` 或 `error`；两阶段使用相同 `request_id`。受理不等于已经播放出声。
+- 未携带回调时，继续使用原 `reply_action/reply_package` 结果广播；有序广播结果保持兼容。
+
 ## 发布与更新
 
 - 仓库：<https://github.com/neta-is-ok/neta-car-music>

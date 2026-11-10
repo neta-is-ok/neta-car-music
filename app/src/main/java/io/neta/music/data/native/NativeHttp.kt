@@ -4,7 +4,11 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.serialization.json.Json
 import okhttp3.Call
 import okhttp3.Callback
+import okhttp3.Cookie
+import okhttp3.CookieJar
 import okhttp3.FormBody
+import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -60,13 +64,15 @@ object NativeHttp {
         randomIp: Boolean = false,
         userAgent: String = DEFAULT_USER_AGENT,
         binary: Boolean = false,
+        diagnostic: ((String) -> Unit)? = null,
+        cookieJar: CookieJar? = null,
     ): NativeResponse {
         val request = Request.Builder()
             .url(url)
             .get()
             .applyCommonHeaders(headers, cookie, randomIp, userAgent)
             .build()
-        return execute(request, binary)
+        return execute(request, binary, diagnostic, cookieJar)
     }
 
     suspend fun postForm(
@@ -76,6 +82,8 @@ object NativeHttp {
         cookie: String = "",
         randomIp: Boolean = false,
         userAgent: String = DEFAULT_USER_AGENT,
+        diagnostic: ((String) -> Unit)? = null,
+        cookieJar: CookieJar? = null,
     ): NativeResponse {
         val body = FormBody.Builder().apply {
             form.forEach { (key, value) -> add(key, value) }
@@ -85,7 +93,7 @@ object NativeHttp {
             .post(body)
             .applyCommonHeaders(headers, cookie, randomIp, userAgent)
             .build()
-        return execute(request)
+        return execute(request, diagnostic = diagnostic, cookieJar = cookieJar)
     }
 
     suspend fun postJson(
@@ -95,13 +103,15 @@ object NativeHttp {
         cookie: String = "",
         randomIp: Boolean = false,
         userAgent: String = DEFAULT_USER_AGENT,
+        diagnostic: ((String) -> Unit)? = null,
+        cookieJar: CookieJar? = null,
     ): NativeResponse {
         val request = Request.Builder()
             .url(url)
             .post(body.toRequestBody("application/json; charset=utf-8".toMediaType()))
             .applyCommonHeaders(headers, cookie, randomIp, userAgent)
             .build()
-        return execute(request)
+        return execute(request, diagnostic = diagnostic, cookieJar = cookieJar)
     }
 
     suspend fun postBytes(
@@ -160,19 +170,81 @@ object NativeHttp {
         return execute(request, binary = true)
     }
 
-    private suspend fun execute(request: Request, binary: Boolean = false): NativeResponse =
+    /** 只记录地址结构和 Cookie 名称/长度，不记录查询参数值、凭证或响应正文。 */
+    internal fun describeUrlForLog(raw: String): String =
+        raw.toHttpUrlOrNull()?.let(::describeUrlForLog) ?: "<missing-or-invalid-url>"
+
+    private fun describeUrlForLog(url: HttpUrl): String =
+        "${url.scheme}://${url.host}${url.encodedPath}" +
+            url.queryParameterNames.sorted().joinToString(
+                prefix = if (url.querySize > 0) "?keys=[" else "",
+                postfix = if (url.querySize > 0) "]" else "",
+            )
+
+    internal fun describeCookiesForLog(cookies: Map<String, String>): String =
+        cookies.toSortedMap().entries.joinToString(prefix = "[", postfix = "]") { (name, value) ->
+            "$name(len=${value.length})"
+        }
+
+    private fun describeRequestCookiesForLog(request: Request): String =
+        describeCookiesForLog(buildMap {
+            request.headers.values("Cookie").flatMap { it.split(';') }.forEach { part ->
+                val pair = part.trim()
+                val index = pair.indexOf('=')
+                if (index > 0) put(pair.substring(0, index).trim(), pair.substring(index + 1).trim())
+            }
+        })
+
+    private fun describeResponseCookiesForLog(response: Response): String =
+        response.headers.values("Set-Cookie").joinToString(prefix = "[", postfix = "]") { header ->
+            val pair = header.substringBefore(';').trim()
+            val name = pair.substringBefore('=')
+            val length = pair.substringAfter('=', "").length
+            val cookie = Cookie.parse(response.request.url, header)
+            "$name(len=$length,domain=${cookie?.domain},path=${cookie?.path},secure=${cookie?.secure})"
+        }
+
+    private suspend fun execute(
+        request: Request,
+        binary: Boolean = false,
+        diagnostic: ((String) -> Unit)? = null,
+        cookieJar: CookieJar? = null,
+    ): NativeResponse =
         suspendCancellableCoroutine { continuation ->
-            val call = client.newCall(request)
+            diagnostic?.invoke(
+                "request ${request.method} ${describeUrlForLog(request.url)} " +
+                    "cookies=${describeRequestCookiesForLog(request)}"
+            )
+            // 只有显式提供的登录会话按域名管理 Cookie；原有调用继续使用无 CookieJar 的共享客户端。
+            val requestClient = if (cookieJar == null) client else client.newBuilder().cookieJar(cookieJar).build()
+            val call = requestClient.newCall(request)
             continuation.invokeOnCancellation { call.cancel() }
             call.enqueue(object : Callback {
                 override fun onFailure(call: Call, error: IOException) {
+                    diagnostic?.invoke("network failure type=${error.javaClass.simpleName} cancelled=${call.isCanceled()}")
                     if (continuation.isActive) continuation.resumeWithException(error)
                 }
 
                 override fun onResponse(call: Call, response: Response) {
                     response.use {
+                        if (diagnostic != null) {
+                            generateSequence(it) { hop -> hop.priorResponse }
+                                .toList().asReversed().forEachIndexed { index, hop ->
+                                    val location = hop.header("Location")?.let { target ->
+                                        hop.request.url.resolve(target)?.let(::describeUrlForLog)
+                                            ?: "<invalid-url>"
+                                    }.orEmpty()
+                                    diagnostic(
+                                        "response hop=$index http=${hop.code} ${describeUrlForLog(hop.request.url)} " +
+                                            "sentCookies=${describeRequestCookiesForLog(hop.request)} " +
+                                            "setCookies=${describeResponseCookiesForLog(hop)} location=$location " +
+                                            "contentType=${hop.header("Content-Type").orEmpty()}"
+                                    )
+                                }
+                        }
                         val bytes = if (binary) runCatching { it.body?.bytes() }.getOrNull() ?: ByteArray(0) else ByteArray(0)
                         val body = if (binary) "" else runCatching { it.body?.string().orEmpty() }.getOrDefault("")
+                        diagnostic?.invoke("body chars=${body.length} bytes=${bytes.size}")
                         if (!it.isSuccessful) {
                             if (continuation.isActive) {
                                 continuation.resumeWithException(

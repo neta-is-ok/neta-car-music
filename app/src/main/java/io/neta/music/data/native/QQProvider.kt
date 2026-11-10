@@ -1,5 +1,7 @@
 package io.neta.music.data.native
 
+import android.util.Log
+import io.neta.music.AppLog
 import io.neta.music.data.CollectionResult
 import io.neta.music.data.ListeningMode
 import io.neta.music.data.Playlist
@@ -26,6 +28,10 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
+import okhttp3.Cookie
+import okhttp3.CookieJar
+import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.net.URI
@@ -1213,7 +1219,7 @@ class QQProvider : BaseNativeProvider(QQ_INFO) {
         val params = parseQuery(key)
         val type = params["type"]?.trim().orEmpty()
             .ifBlank { loginSessions[sessionId]?.type ?: "qq" }
-        val result = if (type == "wx") checkWxLogin(key) else checkQqLogin(key)
+        val result = if (type == "wx") checkWxLogin(key) else checkQqLogin(sessionId, key)
         if (result.status == "success" || result.status == "expired") loginSessions.remove(sessionId)
         return result
     }
@@ -1947,6 +1953,7 @@ class QQProvider : BaseNativeProvider(QQ_INFO) {
     }
 
     private suspend fun createQqLogin(sessionId: String): QRCreateResult {
+        logQqLogin(sessionId, "create", "begin")
         val warmupQuery = qqQuery(
             "appid" to "716027609",
             "daid" to "383",
@@ -1967,10 +1974,12 @@ class QQProvider : BaseNativeProvider(QQ_INFO) {
                 QQ_QR_LOGIN_PAGE_API + "?" + warmupQuery,
                 headers = mapOf("Accept" to "*/*"),
                 userAgent = QQ_LOGIN_USER_AGENT,
+                diagnostic = { logQqLogin(sessionId, "warmup", it) },
             )
-        }.getOrNull()?.cookies?.forEach { (key, value) ->
-            if (value.isNotBlank()) cookies[key] = value
-        }
+        }.onFailure { logQqLogin(sessionId, "warmup", "ignored failure type=${it.javaClass.simpleName}") }
+            .getOrNull()?.cookies?.forEach { (key, value) ->
+                if (value.isNotBlank()) cookies[key] = value
+            }
 
         val showQuery = qqQuery(
             "appid" to "716027609",
@@ -1993,11 +2002,16 @@ class QQProvider : BaseNativeProvider(QQ_INFO) {
             cookie = joinCookies(cookies),
             userAgent = QQ_LOGIN_USER_AGENT,
             binary = true,
+            diagnostic = { logQqLogin(sessionId, "qr-show", it) },
         )
         showResponse.cookies.forEach { (key, value) ->
             if (value.isNotBlank()) cookies[key] = value
         }
         val qrsig = cookies["qrsig"]?.trim().orEmpty()
+        logQqLogin(
+            sessionId, "create",
+            "qrBytes=${showResponse.bytes.size} cookies=${NativeHttp.describeCookiesForLog(cookies)}",
+        )
         if (qrsig.isEmpty()) throw IllegalStateException("qq qr show missing qrsig")
         val loginSig = cookies["pt_login_sig"]?.trim().orEmpty()
         val keyParams = linkedMapOf("qrsig" to qrsig)
@@ -2018,7 +2032,7 @@ class QQProvider : BaseNativeProvider(QQ_INFO) {
         )
     }
 
-    private suspend fun checkQqLogin(key: String): QRCheckResult {
+    private suspend fun checkQqLogin(sessionId: String, key: String): QRCheckResult {
         val params = parseQuery(key)
         val qrsig = params["qrsig"]?.trim().orEmpty()
         if (qrsig.isEmpty()) throw IllegalArgumentException("qq qr login key missing qrsig")
@@ -2054,6 +2068,7 @@ class QQProvider : BaseNativeProvider(QQ_INFO) {
             ),
             cookie = joinCookies(initialCookies),
             userAgent = QQ_LOGIN_USER_AGENT,
+            diagnostic = { logQqLogin(sessionId, "poll", it) },
         )
         val matches = Regex("'([^']*)'").findAll(response.body).map { it.groupValues[1] }.toList()
         val code: String
@@ -2075,6 +2090,12 @@ class QQProvider : BaseNativeProvider(QQ_INFO) {
             "67" -> "scanned"
             else -> "failed"
         }
+        logQqLogin(
+            sessionId, "poll",
+            "status=$status code=${code.toIntOrNull()} callbackFields=${matches.size} " +
+                "redirect=${NativeHttp.describeUrlForLog(redirectUrl)} " +
+                "receivedCookies=${NativeHttp.describeCookiesForLog(response.cookies)}",
+        )
         if (status != "success") return QRCheckResult(status = status, message = message, cookie = "")
         response.cookies.forEach { (name, value) ->
             if (value.isNotBlank()) initialCookies[name] = value
@@ -2082,15 +2103,18 @@ class QQProvider : BaseNativeProvider(QQ_INFO) {
         if (redirectUrl.isEmpty()) {
             return QRCheckResult("failed", "qq login redirect url missing", "")
         }
-        return finishQqLogin(initialCookies, redirectUrl, message)
+        return finishQqLogin(sessionId, initialCookies, redirectUrl, message)
     }
 
     private suspend fun finishQqLogin(
+        sessionId: String,
         cookies: MutableMap<String, String>,
         redirectUrl: String,
         message: String,
     ): QRCheckResult {
         return try {
+            val cookieJar = QQLoginCookieJar()
+            logQqLogin(sessionId, "landing", "cookieScope=domain/path inputCookies=${NativeHttp.describeCookiesForLog(cookies)}")
             val landing = NativeHttp.getResponse(
                 redirectUrl,
                 headers = mapOf(
@@ -2099,21 +2123,29 @@ class QQProvider : BaseNativeProvider(QQ_INFO) {
                 ),
                 cookie = joinCookies(cookies),
                 userAgent = QQ_LOGIN_USER_AGENT,
+                diagnostic = { logQqLogin(sessionId, "landing", it) },
+                cookieJar = cookieJar,
             )
-            landing.cookies.forEach { (name, value) ->
-                if (value.isNotBlank()) cookies[name] = value
-            }
-            val early = normalizeQQMusicCookies(cookies)
-            if (firstNonEmpty(
-                    early["qm_keyst"].orEmpty(),
-                    early["qqmusic_key"].orEmpty(),
-                    early["musickey"].orEmpty(),
-                ).isNotEmpty()
-            ) {
-                return QRCheckResult("success", message, joinCookies(early))
+            // check_sig 同时设置 graph.qq.com 的 p_skey，并删除 qq.com 的同名项，不能先按名称压平。
+            cookies.putAll(cookieJar.cookiesFor(QQ_OAUTH_AUTHORIZE))
+            cookies.putAll(cookieJar.cookiesFor(QQ_MUSICU_API))
+            logQqLogin(
+                sessionId, "landing",
+                "mergedCookies=${NativeHttp.describeCookiesForLog(cookies)} " +
+                    "finalUrl=${NativeHttp.describeUrlForLog(landing.finalUrl)} " +
+                    "html=${landing.body.trimStart().startsWith("<")} " +
+                    "hasJsRedirect=${Regex("location\\s*[.=]|http-equiv\\s*=\\s*['\"]?refresh", RegexOption.IGNORE_CASE).containsMatchIn(landing.body)}",
+            )
+            // QQ 授权的 p_skey 不是 QQ 音乐凭证，必须完成后面的授权码兑换。
+            if (hasQqMusicKey(cookies)) {
+                logQqLogin(sessionId, "complete", "success via landing cookies")
+                return QRCheckResult("success", message, joinCookies(normalizeQQMusicCookies(cookies)))
             }
             val pSkey = cookies["p_skey"]?.trim().orEmpty()
-            if (pSkey.isEmpty()) return QRCheckResult("failed", "qq login missing p_skey", "")
+            if (pSkey.isEmpty()) {
+                logQqLogin(sessionId, "complete", "failed: missing p_skey after landing")
+                return QRCheckResult("failed", "qq login missing p_skey", "")
+            }
 
             val form = linkedMapOf(
                 "response_type" to "code",
@@ -2138,17 +2170,22 @@ class QQProvider : BaseNativeProvider(QQ_INFO) {
                     "Origin" to "https://graph.qq.com",
                     "Accept" to "*/*",
                 ),
-                cookie = joinCookies(cookies),
                 userAgent = QQ_LOGIN_USER_AGENT,
+                diagnostic = { logQqLogin(sessionId, "authorize", it) },
+                cookieJar = cookieJar,
             )
-            authorize.cookies.forEach { (name, value) ->
-                if (value.isNotBlank()) cookies[name] = value
-            }
+            cookies.putAll(cookieJar.cookiesFor(QQ_OAUTH_AUTHORIZE))
+            cookies.putAll(cookieJar.cookiesFor(QQ_MUSICU_API))
             val code = firstNonEmpty(
                 parseQuery(URI(authorize.finalUrl).rawQuery.orEmpty())["code"].orEmpty(),
                 Regex("[?&]code=([^&\"'\\s]+)").find(authorize.body)?.groupValues?.get(1).orEmpty(),
             )
+            logQqLogin(
+                sessionId, "authorize",
+                "codePresent=${code.isNotEmpty()} mergedCookies=${NativeHttp.describeCookiesForLog(cookies)}",
+            )
             if (code.isEmpty()) {
+                logQqLogin(sessionId, "complete", "failed: oauth authorize missing code")
                 return QRCheckResult("failed", "qq oauth authorize missing code", "")
             }
 
@@ -2172,13 +2209,13 @@ class QQProvider : BaseNativeProvider(QQ_INFO) {
                     "Referer" to "https://y.qq.com/",
                     "Accept" to "*/*",
                 ),
-                cookie = joinCookies(cookies),
                 userAgent = QQ_LOGIN_USER_AGENT,
+                diagnostic = { logQqLogin(sessionId, "music-login", it) },
+                cookieJar = cookieJar,
             )
-            login.cookies.forEach { (name, value) ->
-                if (value.isNotBlank()) cookies[name] = value
-            }
+            cookies.putAll(cookieJar.cookiesFor(QQ_MUSICU_API))
             val parsed = json.decodeFromString<QQWxLoginResponse>(login.body)
+            logQqLogin(sessionId, "music-login", "apiCode=${parsed.code} reqCode=${parsed.req.code}")
             if (parsed.code != 0 || parsed.req.code != 0) {
                 val errorMessage = firstNonEmpty(parsed.req.message, parsed.req.msg, parsed.message, parsed.msg)
                 return QRCheckResult(
@@ -2190,19 +2227,52 @@ class QQProvider : BaseNativeProvider(QQ_INFO) {
             for ((name, value) in qqWxLoginDataCookies(parsed.req.data)) {
                 if (cookies[name].isNullOrEmpty()) cookies[name] = value
             }
-            val normalized = normalizeQQMusicCookies(cookies)
-            if (firstNonEmpty(
-                    normalized["qm_keyst"].orEmpty(),
-                    normalized["qqmusic_key"].orEmpty(),
-                    normalized["musickey"].orEmpty(),
-                ).isEmpty()
-            ) {
+            if (!hasQqMusicKey(cookies)) {
+                logQqLogin(sessionId, "complete", "failed: missing qm_keyst")
                 return QRCheckResult("failed", "qq music login missing qm_keyst", "")
             }
+            val normalized = normalizeQQMusicCookies(cookies)
+            logQqLogin(sessionId, "complete", "success cookies=${NativeHttp.describeCookiesForLog(normalized)}")
             QRCheckResult("success", message, joinCookies(normalized))
         } catch (error: Exception) {
+            logQqLogin(sessionId, "complete", "exception type=${error.javaClass.simpleName}")
             QRCheckResult("failed", error.message ?: "qq login failed", "")
         }
+    }
+
+    private fun logQqLogin(sessionId: String, stage: String, detail: String) {
+        // AppLog 供应用内导出，Logcat 供这次模拟器联调；两边都不写凭证值或响应正文。
+        val message = "session=${sessionId.takeLast(8)} stage=$stage $detail"
+        AppLog.i("QQLogin", message)
+        Log.i("QQLogin", message)
+    }
+
+    private fun hasQqMusicKey(cookies: Map<String, String>): Boolean =
+        listOf("qm_keyst", "qqmusic_key", "musickey", "music_key").any { !cookies[it].isNullOrBlank() }
+
+    /** 仅用于一次 QQ 授权链，域名或路径不同的同名 Cookie 互不覆盖。 */
+    private class QQLoginCookieJar : CookieJar {
+        private val stored = LinkedHashMap<Triple<String, String, String>, Cookie>()
+
+        @Synchronized
+        override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
+            val now = System.currentTimeMillis()
+            for (cookie in cookies) {
+                val key = Triple(cookie.domain, cookie.path, cookie.name)
+                if (cookie.expiresAt <= now) stored.remove(key) else stored[key] = cookie
+            }
+        }
+
+        @Synchronized
+        override fun loadForRequest(url: HttpUrl): List<Cookie> {
+            val now = System.currentTimeMillis()
+            stored.entries.removeAll { it.value.expiresAt <= now }
+            return stored.values.filter { it.matches(url) }
+                .sortedWith(compareByDescending<Cookie> { it.path.length }.thenByDescending { it.domain.length })
+        }
+
+        fun cookiesFor(url: String): Map<String, String> =
+            loadForRequest(url.toHttpUrl()).asReversed().associate { it.name to it.value }
     }
 
     private suspend fun createWxLogin(sessionId: String): QRCreateResult {

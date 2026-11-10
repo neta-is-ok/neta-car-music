@@ -39,6 +39,24 @@ APK 输出到 `app/build/outputs/apk/debug/neta-car-music-0.0.5-5.apk`。SDK 与
 - 点歌先返回 `accepted`，搜索及提交播放器后返回 `completed` 或 `error`；两阶段使用相同 `request_id`。受理不等于已经播放出声。
 - 未携带回调时，继续使用原 `reply_action/reply_package` 结果广播；有序广播结果保持兼容。
 
+### MediaSession 歌词输出
+
+播放服务通过 `MediaSession.setSessionExtras()` 输出歌词协议 v1，不需要广播、文件或调用方主动查询歌词接口：
+
+```text
+io.neta.music.lyrics.VERSION  Long = 1
+io.neta.music.lyrics.MEDIA_ID String = 当前 MediaItem.mediaId（Song.key）
+io.neta.music.lyrics.STATE    String = loading / ready / unavailable
+io.neta.music.lyrics.ARTIST   String = 与此 MEDIA_ID 绑定的真实歌手，已知时提供
+android.media.metadata.LYRIC String = 整首带时间戳 LRC，仅 ready 时存在
+```
+
+- 接收端监听系统 `MediaController.onExtrasChanged()`，先与同一会话 metadata 的 MEDIA_ID 核对，再解析正文；Media3 客户端读取 session extras。歌词晚到时不依赖 extras-only 的 metadata 变化通知。
+- 歌词与所属歌曲 ID 一起导出，切歌撤下旧正文；后台播放和交叉淡化换播放器继续发布。仅曲目、歌词或必要元数据变化时更新，不随进度逐行发送。
+- 保留整首时间轴及已有翻译行，只补缺失的歌曲头信息，不修改已有标签冒充匹配。播放进度继续读取 PlaybackState，接收端自行决定显示行数和滚动位置。
+- “通知栏歌词”可能把系统 artist 替换为歌词行；ARTIST 字段和 LRC 头仍取原歌曲歌手，接收端可在 ID 校验后用它稳定歌曲身份，避免每行重新加载。
+- 空歌词、无时间轴、加载失败或正文超过 131072 个 UTF-16 代码单元（约 256 KiB）时发布 `unavailable`，不截断成几行。接收端可回退到自身缓存或在线检索；`loading` 应有界等待，建议最多 2 秒。
+
 ## 发布与更新
 
 - 仓库：<https://github.com/neta-is-ok/neta-car-music>

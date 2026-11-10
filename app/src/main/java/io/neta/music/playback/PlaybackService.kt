@@ -62,6 +62,9 @@ class PlaybackService : MediaSessionService() {
     private var metadataPlayer: SessionMetadataPlayer? = null
     private var metadataFavorites: Set<String>? = null
     private var metadataJob: Job? = null
+    private var sessionLyricsJob: Job? = null
+    private var sessionLyrics = SessionLyricsSnapshot()
+    private var publishedLyrics: SessionLyricsPublication? = null
     private var crossfade: CrossfadeController? = null
     private var carMedia: NetaMediaController? = null
     /** 两路播放器各自的过渡效果参数（低通 / 高通 / 回声），和音频线程共享。 */
@@ -207,6 +210,12 @@ class PlaybackService : MediaSessionService() {
             app?.carMedia = it
             it.start(primary)
         }
+        sessionLyricsJob = app?.appScope?.launch {
+            app.musicViewModel.sessionLyrics.collect { snapshot ->
+                sessionLyrics = snapshot
+                publishSessionLyrics()
+            }
+        }
     }
 
     /**
@@ -233,6 +242,16 @@ class PlaybackService : MediaSessionService() {
         // 随机顺序跟着队列改动走：随机时“下一首播放”照样下一首放，解析完换地址也不会跳到别的歌
         created.setShuffleOrder(QueueShuffleOrder())
         created.addListener(object : Player.Listener {
+            override fun onEvents(player: Player, events: Player.Events) {
+                if (created === this@PlaybackService.player && events.containsAny(
+                        Player.EVENT_MEDIA_ITEM_TRANSITION,
+                        Player.EVENT_MEDIA_METADATA_CHANGED,
+                        Player.EVENT_TIMELINE_CHANGED,
+                    )) {
+                    publishSessionLyrics()
+                }
+            }
+
             override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
                 // 打开随机时从正在放的这首重新打乱；不然它可能排在随机顺序中间，不循环时排在它前面的就轮不到了
                 if (shuffleModeEnabled) {
@@ -266,11 +285,24 @@ class PlaybackService : MediaSessionService() {
         val sessionPlayer = SessionMetadataPlayer(next, metadataFavorites)
         metadataPlayer = sessionPlayer
         session?.setPlayer(sessionPlayer)
+        publishSessionLyrics()
         carMedia?.attach(next)
         (application as? MyMusicApp)?.rhythmAnalyzer?.useSource(slot)
         equalizer?.let { controller -> attachEqualizer(next, controller) }
         (application as? MyMusicApp)?.sleepTimer?.attach(next)
         previous?.release()
+    }
+
+    private fun publishSessionLyrics() {
+        val currentSession = session ?: return
+        val currentPlayer = player ?: return
+        val publication = SessionLyricsProtocol.publication(
+            currentPlayer.currentMediaItem?.mediaId.orEmpty(), currentPlayer.mediaMetadata, sessionLyrics,
+        )
+        if (publication == publishedLyrics) return
+        currentSession.setSessionExtras(publication.extras(currentSession.sessionExtras))
+        publishedLyrics = publication
+        AppLog.d("SessionLyrics", "歌词会话状态=${publication.state}，字符数=${publication.lyrics?.length ?: 0}")
     }
 
     private fun attachEqualizer(player: ExoPlayer, controller: EqualizerController) {
@@ -367,6 +399,10 @@ class PlaybackService : MediaSessionService() {
         handler.removeCallbacks(foregroundGuard)
         metadataJob?.cancel()
         metadataJob = null
+        sessionLyricsJob?.cancel()
+        sessionLyricsJob = null
+        sessionLyrics = SessionLyricsSnapshot()
+        publishedLyrics = null
         broadcastStartId = -1
         broadcastPlayJob?.cancel()
         broadcastPlayJob = null

@@ -105,6 +105,7 @@ import io.neta.music.playback.NowPlayingShape
 import io.neta.music.playback.PlaybackService
 import io.neta.music.playback.SavedCursor
 import io.neta.music.playback.SavedPlayback
+import io.neta.music.playback.SessionLyricsSnapshot
 import io.neta.music.playback.VolumeNormalization
 import io.neta.music.widget.PlaybackSnapshot
 import io.neta.music.widget.SearchRequest
@@ -318,6 +319,17 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
     private val http = OkHttpClient()
     private val base = MutableStateFlow(MusicUiState())
+    /** 只导出带所属歌曲 ID 的完整歌词，不激活 UI combine，也不逐进度发送。 */
+    internal val sessionLyrics: Flow<SessionLyricsSnapshot> = base
+        .map { state ->
+            val song = state.current
+            SessionLyricsSnapshot(
+                mediaId = song?.key.orEmpty(),
+                lyrics = state.lyrics.takeIf { song != null && state.lyricsKey == song.key },
+                artist = song?.artist.orEmpty(),
+            )
+        }
+        .distinctUntilChanged()
     private val settingsState = app.settings.state.stateIn(
         viewModelScope,
         SharingStarted.Eagerly,

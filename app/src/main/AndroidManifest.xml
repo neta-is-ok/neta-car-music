@@ -29,6 +29,8 @@
 
     <!-- Android 11+ 包可见性：查询系统语音识别服务与识别界面时要用 -->
     <queries>
+        <!-- 点歌设置显示哪吒美式的安装版本，并提供语音识别页跳转。 -->
+        <package android:name="io.github.netamade" />
         <intent>
             <action android:name="android.speech.RecognitionService" />
         </intent>

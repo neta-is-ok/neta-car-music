@@ -2,6 +2,7 @@ package io.neta.music.ui.theme
 
 import androidx.compose.material3.ColorScheme
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import com.materialkolor.dynamiccolor.ColorSpec
 import com.materialkolor.material3.dynamicColorScheme
 
@@ -9,6 +10,23 @@ private val BrandCopper = Color(0xFF9E6B3D)
 private val BrandGold = Color(0xFFD49A30)
 private val BrandNeutral = Color(0xFF887B71)
 private val BrandNeutralVariant = Color(0xFF90796B)
+
+/** 版本警告使用固定语义色，不随用户的封面/自选种子色变成普通设置卡片。 */
+internal data class VersionWarningColors(val container: Color, val content: Color, val accent: Color)
+
+private val LightVersionWarning = VersionWarningColors(
+    container = Color(0xFFFFE8B4),
+    content = Color(0xFF4B3500),
+    accent = Color(0xFF9C251B),
+)
+private val DarkVersionWarning = VersionWarningColors(
+    container = Color(0xFF42340F),
+    content = Color(0xFFFFE2A0),
+    accent = Color(0xFFFFB4A7),
+)
+
+internal fun ColorScheme.versionWarningColors(): VersionWarningColors =
+    if (surface.luminance() < 0.5f) DarkVersionWarning else LightVersionWarning
 
 /** 界面、播放页和小组件共用色板；MaterialKolor 负责深浅模式、色阶与对比度。 */
 internal fun appColorScheme(

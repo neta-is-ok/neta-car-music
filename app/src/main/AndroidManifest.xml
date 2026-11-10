@@ -8,6 +8,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- 本地歌上传到网易云盘 / WebDAV：WorkManager 长任务用 dataSync 类型的前台服务（Android 14 起要声明类型和对应权限） -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -113,12 +115,33 @@
                 <action android:name="androidx.media3.session.MediaSessionService" />
             </intent-filter>
         </service>
+        <service
+            android:name=".mcp.MusicMcpService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Local HTTP MCP music control endpoint for the on-device AI assistant" />
+        </service>
+        <receiver android:name=".mcp.McpRegistrationResultReceiver" android:exported="false" />
+        <receiver android:name=".mcp.MusicMcpBootReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
         <!-- 进程不在时蓝牙耳机的播放键、Android 11+ 媒体控件的“继续播放”：拉起 PlaybackService 接上存下来的队列 -->
         <receiver
             android:name=".playback.ResumeButtonReceiver"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MEDIA_BUTTON" />
+            </intent-filter>
+        </receiver>
+        <receiver
+            android:name=".playback.PlaybackBroadcastReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="io.neta.music.action.CONTROL" />
             </intent-filter>
         </receiver>
 

@@ -140,6 +140,11 @@ class MainActivity : ComponentActivity() {
         pauseOnLeave(resumeOnReturn = true)
     }
 
+    override fun onStart() {
+        super.onStart()
+        lifecycleScope.launch { (application as io.neta.music.MyMusicApp).musicMcp.restoreIfEnabled() }
+    }
+
     override fun onStop() {
         super.onStop()
         // 电视根页面连按两次返回是 finish()：activity 直接结束，不算「用户离开」，onUserLeaveHint 不会来。

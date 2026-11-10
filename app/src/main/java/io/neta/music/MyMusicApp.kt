@@ -71,6 +71,7 @@ class MyMusicApp : Application(), ViewModelStoreOwner, Configuration.Provider {
     lateinit var accountProfiles: AccountProfileStore
 
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    internal val musicMcp by lazy { io.neta.music.mcp.MusicMcpManager(this) }
     /** 仅在播放服务存活时设置；静音恢复状态由该服务拥有。 */
     internal var carMedia: NetaMediaController? = null
     val sleepTimer by lazy { SleepTimer(appScope) { carMedia?.cancelResume() } }

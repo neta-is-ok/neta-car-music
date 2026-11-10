@@ -121,6 +121,7 @@ private fun SectionContent(
             onConnectWebDav = { app.nav.navigate(io.neta.music.ui.local.localWebDavRoute(app)) { launchSingleTop = true } },
         )
         SettingsSection.Storage -> StorageContent(app, onBack, embedded, onCacheCleared)
+        SettingsSection.MusicMcp -> MusicMcpSettingsScreen(onBack, embedded)
         SettingsSection.About -> {
             val state by app.model.state.collectAsState()
             val update by app.model.updateDetails.collectAsState()

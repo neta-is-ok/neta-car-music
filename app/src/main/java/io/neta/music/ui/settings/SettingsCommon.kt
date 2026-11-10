@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.PrivacyTip
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -85,6 +86,7 @@ internal enum class SettingsSection(
     Accounts("settings/accounts", "平台账号", "扫码登录、Cookie 与退出", Icons.Filled.Person, IconTone.Secondary),
     Sync("settings/sync", "音乐库同步", "自建歌单的云端同步", Icons.Filled.Cloud, IconTone.Secondary),
     LocalMusic("settings/local", "本地音乐", "扫描范围、封面歌词匹配与上传", Icons.Filled.AudioFile, IconTone.Secondary),
+    MusicMcp("settings/mcp", "奔奔 AI 点歌", "本机 MCP 服务与美式绑定", Icons.Filled.SmartToy, IconTone.Secondary),
     Storage("settings/storage", "存储", "缓存、下载与占用", Icons.Filled.Storage, IconTone.Tertiary),
     About("settings/about", "关于与更新", "版本、更新、许可与隐私", Icons.Filled.Info, IconTone.Tertiary),
     Licenses("settings/licenses", "开源许可", "应用、上游库与第三方依赖", Icons.Filled.Code, IconTone.Tertiary),
@@ -97,7 +99,7 @@ internal enum class SettingsSection(
         /** 设置首页 / 双栏左栏的三组。 */
         val groups = listOf(
             listOf(Appearance, Lyrics, Playback, Report, Equalizer, Sources, Search),
-            listOf(Accounts, Sync, LocalMusic),
+            listOf(Accounts, Sync, LocalMusic, MusicMcp),
             listOf(Storage, About),
         )
     }

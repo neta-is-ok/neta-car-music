@@ -2821,10 +2821,18 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         songs.firstOrNull()?.let { play(it, songs) }
     }
 
-    fun toggleFavorite(song: Song) = viewModelScope.launch {
+    private val favoriteMutex = Mutex()
+
+    fun toggleFavorite(song: Song) = viewModelScope.launch { updateFavorite(song) }
+
+    /** 显式设置时保持幂等；界面、组件与外部广播共用同一条收藏 / 同步路径。 */
+    internal suspend fun updateFavorite(song: Song, favorite: Boolean? = null): Boolean = favoriteMutex.withLock {
         val dao = app.database.dao()
         // 直接查库：组件在后台点收藏时界面没在订阅，favorites 可能还是旧的
-        if (dao.songsOnce("favorite").any { it.key == song.key }) {
+        val wasFavorite = dao.songsOnce("favorite").any { it.key == song.key }
+        val shouldFavorite = favorite ?: !wasFavorite
+        if (wasFavorite == shouldFavorite) return@withLock shouldFavorite
+        if (!shouldFavorite) {
             dao.remove("favorite", song.key)
             dao.saveTombstone(SavedSongTombstone(song.key, "favorite", System.currentTimeMillis()))
         } else {
@@ -2834,6 +2842,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             uploadPrompt("已加入收藏", listOf(song))?.let { _events.tryEmit(it) }
         }
         app.sync.onLocalChange()
+        shouldFavorite
     }
 
     /** 同一首歌同时只跑一次下载；重复点击只提示，不并发写同一个文件。 */
@@ -3747,7 +3756,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         val track = TrackMatcher.singleSource(song, providerName(providerId), providerId, cookieFor(providerId))
         // 本地歌的标签常是“Track 01 / 未知歌手”，按标题歌手时长算的规范 id 会撞车，
         // 队列按 id 去重时就把别的歌吞掉了；本地歌的身份本来就唯一，直接用它
-        return if (providerId == LOCAL_SOURCE) track.copy(id = song.key) else track
+        // 广播只传平台歌曲 ID、不带标题时也用来源身份，不能把所有“未命名歌曲”合成一首。
+        return if (providerId == LOCAL_SOURCE || song.name.isBlank()) track.copy(id = song.key) else track
     }
 
     private fun preferredSong(track: CanonicalTrack): Song {
@@ -5065,6 +5075,41 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         val song = base.value.current ?: return false
         toggleFavorite(song).join()
         return true
+    }
+
+    /** 对外控制读取实际播放状态，不依赖只有界面订阅时才刷新的 state / favorites。 */
+    internal suspend fun currentSongForBroadcast(): Song? {
+        val player = awaitController() ?: error("播放器尚未就绪")
+        restoreJob?.await()
+        return if (player.mediaItemCount == 0) base.value.current else queueSongFor(player) ?: base.value.current
+    }
+
+    /** 广播点歌沿用聚合搜索、换源与队列逻辑，不打开界面，也不改界面中的搜索结果。 */
+    internal suspend fun playFromBroadcast(song: Song?, keyword: String, source: String): Boolean {
+        settingsReady.first { it }
+        awaitController() ?: error("播放器尚未就绪")
+        restoreJob?.await()
+        val started = if (song != null) {
+            playNow(song, listOf(song), openPlayer = false)
+        } else {
+            require(keyword.isNotBlank()) { "请提供 keyword、source + song_id 或 song_json" }
+            val all = app.repository.providers().filter { it.search }
+            val providers = if (source.isNotBlank()) {
+                all.filter { it.id == source }
+            } else {
+                val enabled = settingsState.value.aggregation.enabledOrDefault(all.map { it.id })
+                all.filter { it.id in enabled }
+            }
+            require(providers.isNotEmpty()) { "没有可搜索的音乐平台" }
+            val result = searchEngine.search(keyword, providers).first { it is SearchUpdate.Completed }
+                as SearchUpdate.Completed
+            val track = result.groups.firstOrNull() ?: error("没有找到匹配的歌曲")
+            activeFeed = null
+            _playlists.update { it.copy(listenActive = "") }
+            startTrack(track, listOf(track), source.takeIf { it.isNotBlank() }, openPlayer = false)
+        }
+        if (!started) error(base.value.playbackNotice.ifBlank { base.value.error.ifBlank { "暂时放不了这首" } })
+        return awaitPlaybackStart()
     }
 
     /** 组件里点榜单 / 歌单的一行（[startKey]）或“播放全部”“随机播放”：放整份列表，不弹出播放页。 */

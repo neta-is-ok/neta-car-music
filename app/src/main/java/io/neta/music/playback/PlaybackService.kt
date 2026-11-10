@@ -45,6 +45,8 @@ import io.neta.music.R
 import io.neta.music.data.native.YUNTING_LIVE_HOST
 import io.neta.music.widget.WidgetLinks
 import io.neta.music.widget.WidgetTarget
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 @androidx.annotation.OptIn(UnstableApi::class)
@@ -59,6 +61,8 @@ class PlaybackService : MediaSessionService() {
     private lateinit var mediaSourceFactory: MediaSource.Factory
     private val handler = Handler(Looper.getMainLooper())
     private val foregroundGuard = Runnable { ensureForegroundOrStop() }
+    private var broadcastPlayJob: Job? = null
+    private var broadcastStartId = 0
 
     override fun onCreate() {
         super.onCreate()
@@ -254,6 +258,34 @@ class PlaybackService : MediaSessionService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val result = super.onStartCommand(intent, flags, startId)
+        if (intent?.action == PlaybackBroadcast.ACTION_CONTROL && intent.getStringExtra("command") == "play") {
+            handler.removeCallbacks(foregroundGuard)
+            broadcastStartId = startId
+            broadcastPlayJob?.cancel()
+            val app = application as MyMusicApp
+            try {
+                // 搜索和解析地址可能较慢：立即进前台，不依赖界面或接收器一直存活。
+                if (!isPlaybackOngoing()) startForegroundNotice(R.string.playback_broadcast_loading)
+                broadcastPlayJob = app.appScope.launch {
+                    val reply = try {
+                        PlaybackBroadcast.execute(app, intent)
+                    } catch (_: CancellationException) {
+                        PlaybackControl.failure(IllegalStateException("点歌已取消"))
+                    } catch (error: Exception) {
+                        PlaybackControl.failure(error)
+                    }
+                    PlaybackBroadcast.reply(app, intent, reply)
+                    if (broadcastStartId == startId && !isPlaybackOngoing()) {
+                        ServiceCompat.stopForeground(this@PlaybackService, ServiceCompat.STOP_FOREGROUND_REMOVE)
+                        stopSelfResult(startId)
+                    }
+                }
+            } catch (error: Exception) {
+                PlaybackBroadcast.reply(app, intent, PlaybackControl.failure(error))
+                stopSelfResult(startId)
+            }
+            return START_NOT_STICKY
+        }
         // 蓝牙耳机、系统媒体控件在 App 没运行时按播放：媒体按键接收器用 startForegroundService 拉起服务，
         // 系统要求几秒内进前台。继续播放要先解析地址，断网时可能放不起来，到时还没进前台就自己收场，不让系统崩掉进程
         if (intent?.action == Intent.ACTION_MEDIA_BUTTON && Build.VERSION.SDK_INT >= 26 && !isPlaybackOngoing()) {
@@ -265,6 +297,12 @@ class PlaybackService : MediaSessionService() {
 
     private fun ensureForegroundOrStop() {
         if (isPlaybackOngoing()) return
+        runCatching { startForegroundNotice(R.string.playback_resume_failed) }
+        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
+
+    private fun startForegroundNotice(title: Int) {
         val manager = getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= 26 && manager.getNotificationChannel(GUARD_CHANNEL) == null) {
             manager.createNotificationChannel(
@@ -273,19 +311,15 @@ class PlaybackService : MediaSessionService() {
         }
         val notification = NotificationCompat.Builder(this, GUARD_CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_mymusic)
-            .setContentTitle(getString(R.string.playback_resume_failed))
+            .setContentTitle(getString(title))
             .setSilent(true)
             .build()
-        runCatching {
-            ServiceCompat.startForeground(
-                this,
-                GUARD_NOTIFICATION_ID,
-                notification,
-                if (Build.VERSION.SDK_INT >= 29) ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK else 0,
-            )
-        }
-        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-        stopSelf()
+        ServiceCompat.startForeground(
+            this,
+            PLAYBACK_NOTIFICATION_ID,
+            notification,
+            if (Build.VERSION.SDK_INT >= 29) ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK else 0,
+        )
     }
 
     /**
@@ -302,6 +336,9 @@ class PlaybackService : MediaSessionService() {
 
     override fun onDestroy() {
         handler.removeCallbacks(foregroundGuard)
+        broadcastStartId = -1
+        broadcastPlayJob?.cancel()
+        broadcastPlayJob = null
         carMedia?.stop()
         (application as? MyMusicApp)?.carMedia = null
         carMedia = null
@@ -393,7 +430,7 @@ class PlaybackService : MediaSessionService() {
             .build()
         const val FOREGROUND_GUARD_MS = 8_000L
         const val GUARD_CHANNEL = "playback_resume"
-        const val GUARD_NOTIFICATION_ID = 0x6d6d
+        const val PLAYBACK_NOTIFICATION_ID = DefaultMediaNotificationProvider.DEFAULT_NOTIFICATION_ID
         const val OPEN_PLAYER_REQUEST = 0x6d65
     }
 }

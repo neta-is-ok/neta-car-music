@@ -123,6 +123,7 @@ internal fun settingsOverview(
                 "未连接 · 本机优先"
             },
             SettingsSection.LocalMusic to localMusic,
+            SettingsSection.MusicMcp to "本机点歌 · 绑定、解绑与查询",
             SettingsSection.Storage to "缓存 ${formatBytes(cacheBytes)} · 下载 ${formatBytes(downloadsBytes)}",
             SettingsSection.About to if (updateAvailable) "$version · 发现新版本 ${info?.versionName.orEmpty()}（构建 ${info?.versionCode ?: 0}）" else version,
         ),

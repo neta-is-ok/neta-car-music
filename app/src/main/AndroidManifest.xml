@@ -123,6 +123,10 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Local HTTP MCP music control endpoint for the on-device AI assistant" />
         </service>
+        <service
+            android:name=".data.update.UpdateDownloadService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
         <receiver android:name=".mcp.McpRegistrationResultReceiver" android:exported="false" />
         <receiver android:name=".mcp.MusicMcpBootReceiver" android:exported="false">
             <intent-filter>

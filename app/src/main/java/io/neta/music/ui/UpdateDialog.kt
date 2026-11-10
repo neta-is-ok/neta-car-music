@@ -13,6 +13,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.LinearWavyProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -31,9 +32,8 @@ import io.neta.music.ui.components.LocalAppWindow
 import io.neta.music.ui.components.tvFocusRing
 
 /**
- * 强制更新弹窗：检测到新版本就弹出，不能点“稍后”、点外面或按返回关掉。
- * 下载和校验由 ViewModel 自动开始，校验通过后自动拉起系统安装器；
- * 装上新版本之前这个弹窗一直挡在应用上。
+ * 发现更新后自动下载；可主动切换到后台，下载完成后通过通知或关于页安装。
+ * 留在前台更新时沿用自动打开安装器的流程。
  *
  * @param suppressed 当前正停在“关于与更新”页面时不叠弹窗，由页面里的更新卡片走同样流程
  */
@@ -46,7 +46,7 @@ fun UpdateDialog(
 ) {
     val info = update.info ?: return
     val busy = update.phase == UpdatePhase.Downloading || update.phase == UpdatePhase.Verifying
-    val visible = !suppressed &&
+    val visible = !suppressed && !update.backgroundDownload &&
         update.phase != UpdatePhase.Idle &&
         update.phase != UpdatePhase.Checking
     if (!visible) return
@@ -56,7 +56,7 @@ fun UpdateDialog(
         if (tv) runCatching { actionFocus.requestFocus() }
     }
     AlertDialog(
-        // 强制更新：点外面、按返回都不响应，只有装上新版本才会消失
+        // 通过明确的“后台下载”操作收起，不把误触或返回键当作下载选择。
         onDismissRequest = {},
         title = {
             DialogAvoidsFold()
@@ -87,7 +87,7 @@ fun UpdateDialog(
                     UpdateDialogProgress(update.phase, update.phaseLabel, progress)
                 }
                 Text(
-                    if (busy) "更新完成前无法继续使用应用。" else "此更新必须安装，校验通过后会自动打开系统安装器。",
+                    if (busy) "可以切换到后台下载，继续使用应用。" else "校验通过后会自动打开系统安装器。",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -124,7 +124,12 @@ fun UpdateDialog(
                 else -> Unit
             }
         },
-        dismissButton = {},
+        dismissButton = {
+            if (busy) TextButton(
+                onClick = actions::backgroundUpdate,
+                modifier = Modifier.focusRequester(actionFocus).tvFocusRing(CircleShape),
+            ) { Text("后台下载") }
+        },
     )
 }
 

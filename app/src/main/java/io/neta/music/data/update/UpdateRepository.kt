@@ -87,6 +87,7 @@ data class UpdateUiState(
     val error: String = "",
     val file: File? = null,
     val permissionRequired: Boolean = false,
+    val backgroundDownload: Boolean = false,
 )
 
 enum class InstallResult { Launched, NeedsPermission, Failed }
@@ -176,6 +177,7 @@ class UpdateRepository(
                         message = "已是最新版本",
                         error = "",
                         phaseLabel = "",
+                        backgroundDownload = false,
                     )
                 }
                 return@withContext true
@@ -202,6 +204,7 @@ class UpdateRepository(
                     message = if (manual) "发现新版本 ${info.versionName}（构建 ${info.versionCode}）" else "",
                     error = "",
                     phaseLabel = "",
+                    backgroundDownload = it.backgroundDownload && it.info?.versionCode == info.versionCode,
                 )
             }
             true
@@ -287,7 +290,8 @@ class UpdateRepository(
                     progress = 1f,
                     file = target,
                     error = "",
-                    message = "更新包校验通过，正在打开系统安装器",
+                    message = if (it.backgroundDownload) "更新包已下载并校验，可在关于与更新中安装"
+                        else "更新包校验通过，正在打开系统安装器",
                 )
             }
             true
@@ -311,11 +315,19 @@ class UpdateRepository(
         }
     }
 
-    /** 应用退出时终止仍在进行的下载，避免后台线程继续写缓存。 */
+    /** 下载服务停止时中断网络读取，不与界面开关绑定。 */
     fun cancelDownload() {
         downloadCancelled = true
         activeCall?.cancel()
         activeCall = null
+    }
+
+    fun continueInBackground() {
+        _state.update { if (it.info == null) it else it.copy(backgroundDownload = true) }
+    }
+
+    fun reportDownloadStartFailure(message: String) {
+        _state.update { it.copy(phase = UpdatePhase.Error, error = message) }
     }
 
     /** 从单个线路下载更新包；大小或摘要对不上会抛异常，由调用方换下一条线路。 */

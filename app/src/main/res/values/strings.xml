@@ -11,6 +11,10 @@
     <string name="mcp_channel">本机 AI 点歌</string>
     <string name="mcp_notification_title">奔奔 AI 点歌已就绪</string>
     <string name="mcp_notification_text">本机 MCP 服务正在等待点歌，可在设置中关闭</string>
+    <string name="update_download_channel">应用更新下载</string>
+    <string name="update_download_title">正在下载吒友爱听更新</string>
+    <string name="update_download_ready">吒友爱听更新已下载</string>
+    <string name="update_download_failed">吒友爱听更新下载失败</string>
 
     <!-- 桌面小组件：名字和选择器里的一句说明（android:description） -->
     <string name="widget_now_name">正在播放</string>

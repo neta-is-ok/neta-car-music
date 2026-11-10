@@ -32,16 +32,21 @@ import android.os.Handler
 import android.os.Looper
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
+import androidx.media3.session.CommandButton
 import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaButtonReceiver
+import androidx.media3.session.MediaNotification
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import androidx.media3.session.SessionResult
+import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.SettableFuture
 import io.neta.music.MyMusicApp
 import io.neta.music.R
+import io.neta.music.addAppNotificationExtras
+import io.neta.music.buildAppNotification
 import io.neta.music.data.native.YUNTING_LIVE_HOST
 import io.neta.music.widget.WidgetLinks
 import io.neta.music.widget.WidgetTarget
@@ -68,7 +73,18 @@ class PlaybackService : MediaSessionService() {
         super.onCreate()
         // 不设置的话媒体通知会用 Media3 自带的小图标（一个圈里的播放键），和品牌图标对不上
         setMediaNotificationProvider(
-            DefaultMediaNotificationProvider(this).apply { setSmallIcon(R.drawable.ic_stat_mymusic) }
+            object : DefaultMediaNotificationProvider(this) {
+                override fun addNotificationActions(
+                    mediaSession: MediaSession,
+                    mediaButtons: ImmutableList<CommandButton>,
+                    builder: NotificationCompat.Builder,
+                    actionFactory: MediaNotification.ActionFactory,
+                ): IntArray {
+                    // 首次发布和封面异步更新复用此 Builder，确保每次媒体通知都带上标记。
+                    builder.addAppNotificationExtras()
+                    return super.addNotificationActions(mediaSession, mediaButtons, builder, actionFactory)
+                }
+            }.apply { setSmallIcon(R.drawable.ic_stat_mymusic) }
         )
         val app = application as? MyMusicApp
         val cache = app?.mediaCache
@@ -313,7 +329,7 @@ class PlaybackService : MediaSessionService() {
             .setSmallIcon(R.drawable.ic_stat_mymusic)
             .setContentTitle(getString(title))
             .setSilent(true)
-            .build()
+            .buildAppNotification()
         ServiceCompat.startForeground(
             this,
             PLAYBACK_NOTIFICATION_ID,

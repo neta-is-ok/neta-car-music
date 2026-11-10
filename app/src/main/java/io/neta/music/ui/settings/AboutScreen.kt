@@ -257,7 +257,7 @@ private fun AppHeader(versionName: String, versionCode: Long) {
     }
 }
 
-/** 新版本卡片：更新说明、下载进度、校验和安装都在这里；下载和安装自动进行，系统对话框确认无法省略。 */
+/** 新版本卡片：展示更新说明和下载进度；后台下载完成后可在这里主动安装。 */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun UpdateCard(update: UpdateUiState, actions: MusicActions, progress: () -> Float) {
@@ -298,7 +298,8 @@ private fun UpdateCard(update: UpdateUiState, actions: MusicActions, progress: (
             Row(Modifier.padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Icon(Icons.Filled.Verified, null, Modifier.size(18.dp), tint = content)
                 Text(
-                    "下载后自动校验 SHA-256、包名和版本号，然后自动打开系统安装器。",
+                    if (update.backgroundDownload) "下载后自动校验 SHA-256、包名和版本号，完成后可在这里安装。"
+                    else "下载后自动校验 SHA-256、包名和版本号，然后自动打开系统安装器。",
                     style = MaterialTheme.typography.bodyMedium,
                     color = content,
                 )
@@ -329,7 +330,7 @@ private fun UpdateCard(update: UpdateUiState, actions: MusicActions, progress: (
                 when {
                     ready -> {
                         if (update.permissionRequired) textButton("允许安装", actions::openInstallPermission)
-                        mainButton("重新打开安装器", actions::installUpdate)
+                        mainButton(if (update.backgroundDownload) "安装更新" else "重新打开安装器", actions::installUpdate)
                     }
                     update.phase == UpdatePhase.Error -> {
                         textButton("浏览器打开", actions::openReleasePage)
@@ -364,7 +365,11 @@ private fun UpdateProgressLabel(phase: UpdatePhase, label: String, progress: () 
         derivedStateOf { if (phase == UpdatePhase.Downloading) (progress().coerceIn(0f, 1f) * 100).toInt() else 100 }
     }
     Text(
-        "${label.ifBlank { if (phase == UpdatePhase.Ready) "已下载" else "正在下载" }} $percent% · 下载后校验 SHA-256",
+        when (phase) {
+            UpdatePhase.Ready -> "校验通过，安装包已就绪"
+            UpdatePhase.Verifying -> "正在校验安装包…"
+            else -> "${label.ifBlank { "正在下载" }} $percent% · 下载后校验 SHA-256"
+        },
         Modifier.padding(top = 6.dp),
         style = MaterialTheme.typography.bodyMedium,
         color = color.copy(alpha = 0.85f),

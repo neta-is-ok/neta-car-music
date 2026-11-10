@@ -232,6 +232,7 @@ fun MyMusicApp(model: MusicViewModel) {
             }
             is WidgetTarget.LocalPlaylist -> nav.navigate("localPlaylist/${target.id}") { launchSingleTop = true }
             WidgetTarget.LocalMusic -> nav.navigate(io.neta.music.ui.local.LOCAL_MUSIC_ROUTE) { launchSingleTop = true }
+            WidgetTarget.Updates -> openSettings("settings/about")
         }
     }
 

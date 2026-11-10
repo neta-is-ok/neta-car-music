@@ -96,6 +96,7 @@ import io.neta.music.data.native.PlaylistWriteFailure
 import io.neta.music.data.sync.SyncStrategy
 import io.neta.music.data.update.InstallResult
 import io.neta.music.data.update.UpdatePhase
+import io.neta.music.data.update.UpdateDownloadService
 import io.neta.music.data.update.UpdateUiState
 import io.neta.music.playback.AppleWidevineDrmCallback
 import io.neta.music.playback.CrossfadeHandoff
@@ -405,7 +406,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     /** 本轮播放里已经试过并失败的平台（按曲目）：换源重试要累积排除，不然会在两个源之间来回切。 */
     private val failoverExcluded = mutableMapOf<String, MutableSet<String>>()
-    private var updateDownloadJob: Job? = null
     private var pendingUpdateInstall = false
     private var installLaunching = false
     private var installPermissionAttempts = 0
@@ -700,14 +700,16 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             app.sync.syncIfStaleOnForeground()
         }
         viewModelScope.launch {
-            // 每次打开 App 都检查更新；发现新版本立刻自动下载，用户没有“稍后”可选
+            // 每次打开 App 都检查更新；发现新版本自动下载，可由弹窗切换到后台
             uiLaunched.first { it }
             checkUpdatesInBackground()
         }
-        // 更新包一进入 Ready 就打开系统安装器，不等人点按钮；界面不在前台（组件在后台起播）时等回到 App 由 onAppForeground 拉起
+        // 前台更新完成后自动打开安装器；主动选择后台下载时，通过通知或关于页手动安装。
         viewModelScope.launch {
             updateState.map { it.phase }.distinctUntilChanged().collect { phase ->
-                if (phase == UpdatePhase.Ready && ForegroundActivity.get() != null) launchUpdateInstaller()
+                if (phase == UpdatePhase.Ready && !updateState.value.backgroundDownload && ForegroundActivity.get() != null) {
+                    launchUpdateInstaller()
+                }
             }
         }
         // 当前形状由播放层抽：切歌、改形状设置时抽好，播放页和桌面小组件读同一个值
@@ -5551,7 +5553,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     // ---------- update ----------
 
-    /** 启动和回前台时检查更新；发现新版本直接开始下载，用户没有“稍后”可选。 */
+    /** 启动和回前台时检查更新；发现新版本自动下载，允许主动切换到后台。 */
     private fun checkUpdatesInBackground() {
         lastUpdateAttemptAt = SystemClock.elapsedRealtime()
         viewModelScope.launch {
@@ -5583,9 +5585,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             }
             else -> Unit
         }
-        updateDownloadJob?.cancel()
-        updateDownloadJob = viewModelScope.launch { app.update.download() }
+        try {
+            ContextCompat.startForegroundService(app, Intent(app, UpdateDownloadService::class.java))
+        } catch (exception: Exception) {
+            app.update.reportDownloadStartFailure("无法启动更新下载：${exception.message.orEmpty()}")
+        }
     }
+
+    fun backgroundUpdate() = app.update.continueInBackground()
 
     fun installUpdate() {
         viewModelScope.launch { launchUpdateInstaller() }
@@ -5653,10 +5660,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             // 部分盒子它恒为 false，拿它当条件会把用户卡在设置页和弹窗之间来回打转
             pendingUpdateInstall = false
             viewModelScope.launch { launchUpdateInstaller() }
-        } else if (update.phase == UpdatePhase.Ready && update.file != null &&
+        } else if (update.phase == UpdatePhase.Ready && !update.backgroundDownload && update.file != null &&
             (lastInstallOutcome == InstallResult.Launched || lastInstallOutcome == null)
         ) {
-            // 之前把用户送到了系统安装器，但用户退出了：回到应用立即再次拉起，更新不能跳过。
+            // 保留前台更新的自动安装流程；主动选择后台下载的版本由用户点击安装。
             // 没拉起过（下载完时界面不在前台，比如组件在后台起播）也在这里拉起
             viewModelScope.launch { launchUpdateInstaller() }
         }
@@ -5812,7 +5819,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         progressJob?.cancel()
         aggregateSearchJob?.cancel()
         collectionSearchJob?.cancel()
-        app.update.cancelDownload()
         controllerFuture?.cancel(true)
         controller?.release()
         super.onCleared()

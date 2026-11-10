@@ -68,6 +68,7 @@ sealed interface WidgetTarget {
 
     /** 本地音乐页：上传通知点进来看进度、取消和重试。 */
     data object LocalMusic : WidgetTarget
+    data object Updates : WidgetTarget
 }
 
 /** 搜索页要做的一次性动作：组件的搜索条聚焦输入框，识曲按钮直接开始听。 */
@@ -102,6 +103,7 @@ object WidgetLinks {
                 "localPlaylist"
             }
             WidgetTarget.LocalMusic -> "localMusic"
+            WidgetTarget.Updates -> "updates"
         }
         return intent.putExtra(EXTRA_TARGET, name)
     }
@@ -127,6 +129,7 @@ object WidgetLinks {
             )
             "localPlaylist" -> if (id.isBlank()) null else WidgetTarget.LocalPlaylist(id)
             "localMusic" -> WidgetTarget.LocalMusic
+            "updates" -> WidgetTarget.Updates
             else -> null
         }
     }

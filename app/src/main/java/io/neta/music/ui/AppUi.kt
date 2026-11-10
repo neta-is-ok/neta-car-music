@@ -313,6 +313,7 @@ class MusicActions(private val model: MusicViewModel) {
     fun checkUpdates() = model.checkForUpdates()
     suspend fun checkUpdatesNow(): io.neta.music.data.update.UpdateUiState = model.checkForUpdatesNow()
     fun downloadUpdate() = model.downloadUpdate()
+    fun backgroundUpdate() = model.backgroundUpdate()
     fun installUpdate() = model.installUpdate()
     fun openInstallPermission() = model.openInstallPermission()
     fun openReleasePage() = model.openReleasePage()

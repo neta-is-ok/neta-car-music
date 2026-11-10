@@ -15,6 +15,7 @@ import androidx.core.app.ServiceCompat
 import io.neta.music.MainActivity
 import io.neta.music.MyMusicApp
 import io.neta.music.R
+import io.neta.music.buildAppNotification
 import kotlinx.coroutines.launch
 
 /** 等待奔奔 AI 的本机调用，和播放服务分开保活：没在播放时仍能点歌，不伪装成正在播放。 */
@@ -34,7 +35,8 @@ class MusicMcpService : Service() {
                 .setSmallIcon(R.drawable.ic_stat_mymusic)
                 .setContentTitle(getString(R.string.mcp_notification_title))
                 .setContentText(getString(R.string.mcp_notification_text))
-                .setContentIntent(open).setOngoing(true).setSilent(true).build()
+                .setContentIntent(open).setOngoing(true).setSilent(true)
+                .buildAppNotification()
             ServiceCompat.startForeground(this, NOTIFICATION_ID, notification,
                 if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE else 0)
             val created = MusicMcpServer(app)

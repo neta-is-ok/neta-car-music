@@ -23,6 +23,7 @@ import io.neta.music.AppLog
 import io.neta.music.BackgroundWork
 import io.neta.music.MyMusicApp
 import io.neta.music.R
+import io.neta.music.buildAppNotification
 import io.neta.music.data.cloud.CloudUploadStage
 import io.neta.music.widget.WidgetLinks
 import io.neta.music.widget.WidgetTarget
@@ -179,7 +180,7 @@ class LocalUploadWorker(context: Context, params: WorkerParameters) : CoroutineW
                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
                 ),
             )
-            .build()
+            .buildAppNotification()
 
         private fun canNotify(context: Context): Boolean =
             Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||

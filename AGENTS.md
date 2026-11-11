@@ -37,6 +37,7 @@
 - 远端为 `git@github.com:neta-is-ok/neta-car-music.git`，默认应用更新仓库为 `neta-is-ok/neta-car-music`。
 - 提交使用简洁的中文 Conventional Commits，只包含本次改动。
 - 每次发布先比较上次正式 Release 与当前源码，向用户展示拟发布的版本号和完整更新说明；用户确认本次更新内容后，才能推送发布提交、标签或创建 GitHub Release。最初要求“执行发布”不代替对具体更新内容的确认。
+- 更新说明面向友友用户：二次元风 + emoji、短句直击要点，不写技术术语和内部改动；只保留更新内容本身，不加“适用于哪吒车机 Android 11”、许可证、上游链接等尾注。
 - 发布统一由本地完成编译、正式签名及更新附件生成，再由本地脚本上传 GitHub Release。使用 `scripts/release.py prepare --notes <项目内说明文件>` 准备产物，确认后执行 `scripts/release.py publish`；更新说明存放在忽略的 `build/` 或 `dist/` 中，不另建交接文档。
 - 普通分支推送及 PR 的 GitHub Actions 只编译 Debug，不再通过标签或手动工作流构建、签名或发布 Release。发布使用 `v<versionName>-<versionCode>` 标签，例如 `v0.0.1-1`；标签必须与源码版本完全一致，并指向构建该 APK 的提交。
 - 发布脚本的 Git 推送、Release 创建和附件上传必须支持有上限的重试；中断后可复用本地产物重跑上传，不重新编译。先创建草稿，三个更新附件上传完成后才公开；失败时保留本地产物和草稿，不自动清理或覆盖其他版本。

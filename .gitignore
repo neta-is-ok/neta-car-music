@@ -17,6 +17,7 @@ core/*.jar
 .idea/
 *.iml
 .vscode/
+.zcode/
 
 # Signing and release outputs
 *.jks

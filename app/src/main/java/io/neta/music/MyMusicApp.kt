@@ -92,6 +92,9 @@ class MyMusicApp : Application(), ViewModelStoreOwner, Configuration.Provider {
         )
     }
 
+    /** 原歌词流程没有有效同步歌词时才使用，不依赖播放页面或哪吒美式运行。 */
+    internal val lyricsFallback by lazy { io.neta.music.data.lyrics.LyricsFallback(this) }
+
     /**
      * 本地歌上传：网易云盘、WebDAV 各一条串行队列，落盘在 cloud_uploads，后台用 WorkManager 前台服务跑。
      * 启动时在 onCreate 里放回队列；后台任务被系统拉起时也会第一次取到它。

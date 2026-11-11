@@ -61,6 +61,17 @@ android.media.metadata.LYRIC String = 整首带时间戳 LRC，仅 ready 时存�
 - “通知栏歌词”可能把系统 artist 替换为歌词行；ARTIST 字段和 LRC 头仍取原歌曲歌手，接收端可在 ID 校验后用它稳定歌曲身份，避免每行重新加载。
 - 空歌词、无时间轴、加载失败或正文超过 131072 个 UTF-16 代码单元（约 256 KiB）时发布 `unavailable`，不截断成几行。接收端可回退到自身缓存或在线检索；`loading` 应有界等待，建议最多 2 秒。
 
+## 歌词获取
+
+原平台歌词优先，本地歌完整保留现有同名 `.lrc`、匹配平台和云盘歌词的优先级。原流程没有有效同步歌词时，才使用移植自哪吒美式歌词助手的多源在线兜底：网易云、QQ、酷狗 PC/移动端、酷我、LrcLib，以及汽水歌曲的适用查询路径。
+
+- 按歌名、歌手、时长和已识别版本选择候选，不修改正在播放的音源或歌曲 ID。有效原歌词保留逐字时间、翻译和罗马音；原来源只有纯文本时先保留，兜底没有命中也不清空它。
+- 成功结果保存在本应用 `cacheDir/online-lyrics`，由原歌曲身份和元数据共同绑定；不长期缓存网络失败或无命中。直播及实际歌名缺失时不做跨平台搜索。
+- 每次兜底 HTTP 预算 4 秒，整个在线兜底预算 24 秒；取消会传到现有 NativeHttp，切歌不串词。该预算不修改原平台的网络配置，歌词获取不阻塞音频播放。
+- 结果回填原 `lyrics/lyricsKey`，播放页、通知歌词、小组件与 MediaSession 继续使用同一份结果，无需美式运行或新增跨应用接口。通知歌词缓存同时检查正文变化，支持同曲晚到的兜底歌词。
+
+实现入口为 `data/lyrics/LyricsFallback.kt`、`OnlineLyricsSources.kt` 与 `ui/MusicViewModel.kt` 的 `loadLyrics()`；本地歌词提供器及 `MusicRepository.lyrics()` 不承担跨平台兜底。
+
 ## 发布与更新
 
 - 仓库：<https://github.com/neta-is-ok/neta-car-music>

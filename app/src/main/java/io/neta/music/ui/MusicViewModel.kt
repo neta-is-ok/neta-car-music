@@ -3701,15 +3701,25 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         // 快速切歌时上一首的请求可能比新歌晚返回，只保留最新一次
         lyricsJob?.cancel()
         lyricsJob = viewModelScope.launch {
-            val lyrics = runCatching {
+            val original = try {
                 // 本地歌：同名 .lrc 或匹配到的平台的歌词，由本地音乐库决定用哪份
                 if (song.source == LOCAL_SOURCE) {
                     app.localLibrary.lyrics(song, settingsState.value.cookies)
                 } else {
                     app.repository.lyrics(song, cookieFor(song.source))
                 }
-            }.getOrDefault("")
-            // runCatching 会吞掉取消异常，被取消的旧请求在这里停下，不再写回
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (error: Exception) {
+                AppLog.w("LyricsFallback", "原来源歌词获取失败：音源=${song.source}，类型=${error.javaClass.simpleName}")
+                ""
+            }
+            if (!isActive) return@launch
+            // 原来源的纯文本先保留；整个 LocalLibrary 流程结束后才兜底，不能抢占同名 .lrc/云盘。
+            if (original.isNotBlank()) {
+                base.value = base.value.copy(lyrics = original, lyricsKey = song.key)
+            }
+            val lyrics = app.lyricsFallback.resolve(song, original)
             if (!isActive) return@launch
             // 请求完成后再读 base：先取 base.value 再挂起会把请求期间更新的当前歌曲、播放状态写回旧值
             base.value = base.value.copy(lyrics = lyrics, lyricsKey = song.key)
@@ -3717,6 +3727,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private var notifLyricsKey: String? = null
+    private var notifLyricsRaw: String? = null
     private var notifLyricLines: List<LyricLine> = emptyList()
 
     /**
@@ -3738,13 +3749,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         // 按歌词文字设置拆双语、简转繁（罗马音这里用不上）；转换放后台，算好之前这一行先显示歌手名
         val text = settingsState.value.lyricText.copy(autoRomanize = false)
         val cacheKey = key + "#" + text.hashCode()
-        if (notifLyricsKey != cacheKey) {
+        val raw = base.value.lyrics
+        if (notifLyricsKey != cacheKey || notifLyricsRaw != raw) {
             notifLyricsKey = cacheKey
+            notifLyricsRaw = raw
             notifLyricLines = emptyList()
-            val raw = base.value.lyrics
             viewModelScope.launch {
                 val lines = withContext(Dispatchers.Default) { LyricPipeline.prepare(raw, text).lines }
-                if (notifLyricsKey == cacheKey) notifLyricLines = lines
+                if (notifLyricsKey == cacheKey && notifLyricsRaw == raw) notifLyricLines = lines
             }
         }
         val line = notifLyricLines.getOrNull(LyricsParser.activeLineIndex(notifLyricLines, positionMs))

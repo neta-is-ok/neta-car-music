@@ -40,7 +40,8 @@
 - 发布统一由本地完成编译、正式签名及更新附件生成，再由本地脚本上传 GitHub Release。使用 `scripts/release.py prepare --notes <项目内说明文件>` 准备产物，确认后执行 `scripts/release.py publish`；更新说明存放在忽略的 `build/` 或 `dist/` 中，不另建交接文档。
 - 普通分支推送及 PR 的 GitHub Actions 只编译 Debug，不再通过标签或手动工作流构建、签名或发布 Release。发布使用 `v<versionName>-<versionCode>` 标签，例如 `v0.0.1-1`；标签必须与源码版本完全一致，并指向构建该 APK 的提交。
 - 发布脚本的 Git 推送、Release 创建和附件上传必须支持有上限的重试；中断后可复用本地产物重跑上传，不重新编译。先创建草稿，三个更新附件上传完成后才公开；失败时保留本地产物和草稿，不自动清理或覆盖其他版本。
-- APK 命名为 `neta-car-music-<versionName>-<versionCode>.apk`，并随 Release 发布 `update.json` 和 `update.apk.sha256`。对应源码通过版本标签及 GitHub 自动生成的 Source code 归档提供，不额外生成或上传源码包。
+- GitHub Release 的 APK 命名为 `neta-car-music-<versionName>-<versionCode>.apk`，并随 Release 发布 `update.json` 和 `update.apk.sha256`。对应源码通过版本标签及 GitHub 自动生成的 Source code 归档提供，不额外生成或上传源码包。
+- 本地正式签名构建必须同时导出中文名副本 `吒友爱听-<versionName>-<versionCode>.apk`，输出到 `app/build/outputs/local-apk/release/`。直接复制同一份正式签名 APK，不重复编译或重签；中文名副本用于本地交付，不额外上传到 GitHub Release。
 - Release 必须使用稳定专用签名；本地密钥放在当前仓库根目录 `keystore.jks`，配置放在 `signing.properties`，两者均忽略、不提交，不放到仓库外的配置目录。发布不依赖 CI 签名 Secrets，不回退到 debug 签名。
 - 应用更新只指向构建时配置的本项目 GitHub 仓库。未配置仓库时不请求上游更新，手动检查应显示“尚未配置更新仓库”。
 - 更新清单与 APK 使用 `app/src/main/assets/cdn-providers.json` 中的 CDN 镜像；该文件初始来自 Netamade，保留独立副本供本仓库构建。

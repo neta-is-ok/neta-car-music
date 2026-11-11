@@ -4,7 +4,7 @@
 
 - 应用名：吒友爱听
 - 包名：`io.neta.music`
-- 版本：`0.0.6 (6)`，由 [version.properties](version.properties) 统一维护
+- 版本：`0.0.7 (7)`，由 [version.properties](version.properties) 统一维护
 - 运行目标：Android 11（API 30）
 - 技术栈：Kotlin、Jetpack Compose / Material 3、Media3
 
@@ -16,7 +16,7 @@
 ./gradlew :app:assembleDebug
 ```
 
-APK 输出到 `app/build/outputs/apk/debug/neta-car-music-0.0.6-6.apk`。SDK 与依赖版本以 `gradle/libs.versions.toml` 为准。
+APK 输出到 `app/build/outputs/apk/debug/neta-car-music-0.0.7-7.apk`。SDK 与依赖版本以 `gradle/libs.versions.toml` 为准。
 
 正式签名包执行：
 
@@ -26,8 +26,8 @@ APK 输出到 `app/build/outputs/apk/debug/neta-car-music-0.0.6-6.apk`。SDK 与
 
 配置仓库根目录的 `keystore.jks`、`signing.properties` 或对应签名环境变量后，Release 构建会完成签名并自动输出：
 
-- 英文发布包：`app/build/outputs/apk/release/neta-car-music-0.0.6-6.apk`
-- 中文名副本：`app/build/outputs/local-apk/release/吒友爱听-0.0.6-6.apk`
+- 英文发布包：`app/build/outputs/apk/release/neta-car-music-0.0.7-7.apk`
+- 中文名副本：`app/build/outputs/local-apk/release/吒友爱听-0.0.7-7.apk`
 
 两份 APK 的内容和签名相同，文件名随 `version.properties` 自动变化。中文名副本只在配置 Release 签名后生成，不影响原有 Debug 构建或英文发布包。密钥和密码不入库，开发约定见 [AGENTS.md](AGENTS.md)。
 
@@ -73,13 +73,13 @@ android.media.metadata.LYRIC String = 整首带时间戳 LRC，仅 ready 时存�
 
 ```sh
 # 在 main 提交本次源码和版本后，使用项目内的说明文件准备正式签名包。
-python3 scripts/release.py prepare --notes build/releases/0.0.6/release-notes.md
+python3 scripts/release.py prepare --notes build/releases/0.0.7/release-notes.md
 
 # 用户确认说明后上传；脚本会展示本次说明，并要求输入完整版本标签确认。
 python3 scripts/release.py publish
 ```
 
-依赖 Python 3、已登录的 GitHub CLI（`gh`）、Git，以及本机构建环境。准备结果保存在 `dist/v0.0.6-6/`，包括正式 APK、`update.json`、`update.apk.sha256` 和本地发布说明。脚本只核对产物包名、版本和正式签名，计算一次更新所需的 SHA-256，不下载回验或重复编译。
+依赖 Python 3、已登录的 GitHub CLI（`gh`）、Git，以及本机构建环境。准备结果保存在 `dist/v0.0.7-7/`，包括正式 APK、`update.json`、`update.apk.sha256` 和本地发布说明。脚本只核对产物包名、版本和正式签名，计算一次更新所需的 SHA-256，不下载回验或重复编译。
 
 网络操作默认最多尝试 5 次，等待时间依次为 5、10、15、20 秒；可通过 `RELEASE_RETRIES`、`RELEASE_RETRY_DELAY` 调整。上传失败后直接重跑 `publish`，复用已签名产物；附件先上传到草稿，全部成功后才公开并设为最新版。
 

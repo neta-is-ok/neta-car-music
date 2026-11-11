@@ -39,6 +39,10 @@ APK 输出到 `app/build/outputs/apk/debug/neta-car-music-0.0.6-6.apk`。SDK 与
 - 点歌先返回 `accepted`，搜索及提交播放器后返回 `completed` 或 `error`；两阶段使用相同 `request_id`。受理不等于已经播放出声。
 - 未携带回调时，继续使用原 `reply_action/reply_package` 结果广播；有序广播结果保持兼容。
 
+带 `request_id` 的 `play` 另输出低频系统 INFO 事件，tag 固定为 `NetaMusicControl`。正文为单行 JSON：`v=1`、`command=play`、`request_id`、`user_id`、`phase`，阶段为 `received`、`accepted`、`completed` 或 `error`。后三种阶段同时包含 `success`，并按可用情况带 `title`、`artist`、`message`；不输出完整 Intent、歌词或账号数据。标题/歌手各最多 192 字符，错误说明最多 384 字符。
+
+事件通过 `AppLog.systemInfo()` 同时进入应用日志和系统 logcat；普通 `AppLog.i()` 仍只写内存。美式可按请求 ID 和目标用户从已有日志流跟踪副屏状态：发出即提示，后续有事件才更新，缺事件不判超时。这是可选观察通道，不改变原广播/ResultReceiver，也不表示 `completed` 时已经播放出声。
+
 ### MediaSession 歌词输出
 
 播放服务通过 `MediaSession.setSessionExtras()` 输出歌词协议 v1，不需要广播、文件或调用方主动查询歌词接口：

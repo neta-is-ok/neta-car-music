@@ -7,7 +7,8 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * 应用内日志环形缓冲。只存内存，不落盘——目的是让用户能把现场导出来给我们看，
+ * 应用内日志环形缓冲。常规日志只存内存；[systemInfo] 同时输出少量跨应用状态到系统 INFO 日志。
+ * 目的是让用户能把现场导出来给我们看，
  * 尤其是播放器里那些只有真机才复现的问题（DRM 授权、取流降级之类）。
  *
  * 用法：`AppLog.d("TAG", "消息")`，导出走 `设置 › 关于 › 导出日志`。
@@ -33,16 +34,19 @@ object AppLog {
 
     fun d(tag: String, message: String) = add("D", tag, message)
     fun i(tag: String, message: String) = add("I", tag, message)
+    /** 仅用于需要其他应用观察的低频事件，仍先经过同一套脱敏。 */
+    fun systemInfo(tag: String, message: String) = add("I", tag, message, systemInfo = true)
     fun w(tag: String, message: String) = add("W", tag, message)
     fun e(tag: String, message: String, error: Throwable? = null) =
         add("E", tag, if (error == null) message else "$message — ${error.javaClass.simpleName}: ${error.message}")
 
-    private fun add(level: String, tag: String, raw: String) {
+    private fun add(level: String, tag: String, raw: String, systemInfo: Boolean = false) {
         val message = redact(raw.take(MAX_MESSAGE))
         synchronized(lock) {
             if (entries.size >= MAX_ENTRIES) entries.removeFirst()
             entries.addLast(Entry(System.currentTimeMillis(), level, tag, message))
         }
+        if (systemInfo) android.util.Log.i(tag, message)
     }
 
     fun snapshot(): List<Entry> = synchronized(lock) { entries.toList() }

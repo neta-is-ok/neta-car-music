@@ -5,10 +5,12 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.os.Process
 import android.os.ResultReceiver
 import androidx.core.content.ContextCompat
 import androidx.core.content.IntentCompat
 import io.neta.music.MyMusicApp
+import io.neta.music.AppLog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import org.json.JSONObject
@@ -40,6 +42,7 @@ import org.json.JSONObject
 class PlaybackBroadcastReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != PlaybackBroadcast.ACTION_CONTROL) return
+        PlaybackBroadcast.logReceived(intent)
         val ordered = isOrderedBroadcast
         val pending = goAsync()
         val app = context.applicationContext as MyMusicApp
@@ -95,6 +98,7 @@ internal object PlaybackBroadcast {
     fun reply(context: Context, request: Intent, result: Bundle) {
         result.putString("command", request.getStringExtra("command").orEmpty())
         request.getStringExtra("request_id")?.let { result.putString("request_id", it) }
+        logPlayEvent(request, result.getString("status").orEmpty(), result)
         val receiver = IntentCompat.getParcelableExtra(request, EXTRA_RESULT_RECEIVER, ResultReceiver::class.java)
         if (receiver != null) {
             // 回调 Binder 随完整请求转交播放服务；只回调用方，不依赖其用户、包名或动态接收器。
@@ -107,5 +111,30 @@ internal object PlaybackBroadcast {
         context.sendBroadcast(Intent(request.getStringExtra("reply_action")?.takeIf { it.isNotBlank() } ?: ACTION_RESULT)
             .setPackage(request.getStringExtra("reply_package")?.takeIf { it.isNotBlank() })
             .putExtras(result))
+    }
+
+    fun logReceived(request: Intent) = logPlayEvent(request, "received", null)
+
+    /**
+     * 系统 INFO 事件 v1：只观察带 request_id 的 play，不改变回执或播放行为。
+     * 美式按请求和目标用户关联；没有读到日志时仍以已发送结束，不因此等待或重发。
+     */
+    private fun logPlayEvent(request: Intent, phase: String, result: Bundle?) {
+        if (request.getStringExtra("command") != "play") return
+        val requestId = request.getStringExtra("request_id")?.takeIf { it.isNotBlank() && it.length <= 128 } ?: return
+        if (phase !in setOf("received", "accepted", "completed", "error")) return
+        val event = JSONObject()
+            .put("v", 1)
+            .put("command", "play")
+            .put("request_id", requestId)
+            .put("user_id", Process.myUid() / 100000)
+            .put("phase", phase)
+        if (result != null) {
+            event.put("success", result.getBoolean("success"))
+            event.put("title", result.getString("title").orEmpty().take(192))
+            event.put("artist", result.getString("artist").orEmpty().take(192))
+            event.put("message", result.getString("message").orEmpty().take(384))
+        }
+        AppLog.systemInfo("NetaMusicControl", event.toString())
     }
 }

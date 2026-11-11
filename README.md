@@ -36,12 +36,13 @@ APK 输出到 `app/build/outputs/apk/debug/neta-car-music-0.0.7-7.apk`。SDK 与
 向包 `io.neta.music` 发送 `io.neta.music.action.CONTROL` 广播，通过字符串 `command` 点歌、收藏或切换播放模式；参数及结果字段见 [PlaybackBroadcastReceiver](app/src/main/java/io/neta/music/playback/PlaybackBroadcastReceiver.kt) 的接口说明。
 
 - Android 调用方可携带平台 `android.os.ResultReceiver` 参数 `result_receiver`，结果直接回到发起进程，无需注册结果广播接收器。
+- 本地回调若使用 `ResultReceiver` 的匿名或自定义子类，发送前须先调用其 `writeToParcel()`，再用 `ResultReceiver.CREATOR.createFromParcel()` 还原为系统类型；保留本地原回调，只把系统类型放入 Intent。直接传子类会让接收方查找发送应用的私有类，Android 11 连请求中的字符串参数也无法读取。
 - 点歌先返回 `accepted`，搜索及提交播放器后返回 `completed` 或 `error`；两阶段使用相同 `request_id`。受理不等于已经播放出声。
 - 未携带回调时，继续使用原 `reply_action/reply_package` 结果广播；有序广播结果保持兼容。
 
-带 `request_id` 的 `play` 另输出低频系统 INFO 事件，tag 固定为 `NetaMusicControl`。正文为单行 JSON：`v=1`、`command=play`、`request_id`、`user_id`、`phase`，阶段为 `received`、`accepted`、`completed` 或 `error`。后三种阶段同时包含 `success`，并按可用情况带 `title`、`artist`、`message`；不输出完整 Intent、歌词或账号数据。标题/歌手各最多 192 字符，错误说明最多 384 字符。
+带 `request_id` 的 `play` 另输出低频系统 INFO 事件，tag 固定为 `NetaMusicControl`。正文为单行 JSON：`v=1`、`command=play`、`request_id`、`user_id`、`phase`，阶段为 `received`、`accepted`、`completed`、`playing` 或 `error`。除 `received` 外都包含 `success`，并按可用情况带 `title`、`artist`、`message`；不输出完整 Intent、歌词或账号数据。标题/歌手各最多 192 字符，错误说明最多 384 字符。
 
-事件通过 `AppLog.systemInfo()` 同时进入应用日志和系统 logcat；普通 `AppLog.i()` 仍只写内存。美式可按请求 ID 和目标用户从已有日志流跟踪副屏状态：发出即提示，后续有事件才更新，缺事件不判超时。这是可选观察通道，不改变原广播/ResultReceiver，也不表示 `completed` 时已经播放出声。
+事件通过 `AppLog.systemInfo()` 同时进入应用日志和系统 logcat；普通 `AppLog.i()` 仍只写内存。`completed` 保持“已提交播放器”的原意；`playing` 只在本次歌曲进入实际播放器的播放状态时输出一次，缓冲、上一首仍在播放和暂停后继续都不会重复报起播。美式主副屏点歌使用普通广播：立即提示执行，发送后收起原车语音助手，再按请求 ID 与目标用户读取日志补充播放/失败通知；缺日志不等待、不判超时、不重发。原通用广播及 ResultReceiver 结果接口不变。
 
 ### MediaSession 歌词输出
 

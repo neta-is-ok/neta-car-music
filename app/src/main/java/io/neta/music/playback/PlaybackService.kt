@@ -244,6 +244,14 @@ class PlaybackService : MediaSessionService() {
         created.addListener(object : Player.Listener {
             override fun onEvents(player: Player, events: Player.Events) {
                 if (created === this@PlaybackService.player && events.containsAny(
+                        Player.EVENT_IS_PLAYING_CHANGED,
+                        Player.EVENT_MEDIA_ITEM_TRANSITION,
+                        Player.EVENT_TIMELINE_CHANGED,
+                        Player.EVENT_PLAYBACK_STATE_CHANGED,
+                    )) {
+                    PlaybackBroadcast.logPlaying(created)
+                }
+                if (created === this@PlaybackService.player && events.containsAny(
                         Player.EVENT_MEDIA_ITEM_TRANSITION,
                         Player.EVENT_MEDIA_METADATA_CHANGED,
                         Player.EVENT_TIMELINE_CHANGED,
@@ -291,6 +299,7 @@ class PlaybackService : MediaSessionService() {
         equalizer?.let { controller -> attachEqualizer(next, controller) }
         (application as? MyMusicApp)?.sleepTimer?.attach(next)
         previous?.release()
+        PlaybackBroadcast.logPlaying(next)
     }
 
     private fun publishSessionLyrics() {
@@ -318,11 +327,16 @@ class PlaybackService : MediaSessionService() {
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo) = session
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == PlaybackBroadcast.ACTION_CONTROL && PlaybackBroadcast.decodeError(intent) != null) {
+            if (!isPlaybackOngoing()) stopSelfResult(startId)
+            return START_NOT_STICKY
+        }
         val result = super.onStartCommand(intent, flags, startId)
         if (intent?.action == PlaybackBroadcast.ACTION_CONTROL && intent.getStringExtra("command") == "play") {
             handler.removeCallbacks(foregroundGuard)
             broadcastStartId = startId
             broadcastPlayJob?.cancel()
+            PlaybackBroadcast.observePlayback(intent)
             val app = application as MyMusicApp
             try {
                 // 搜索和解析地址可能较慢：立即进前台，不依赖界面或接收器一直存活。
@@ -406,6 +420,7 @@ class PlaybackService : MediaSessionService() {
         broadcastStartId = -1
         broadcastPlayJob?.cancel()
         broadcastPlayJob = null
+        PlaybackBroadcast.clearPlaybackObservation()
         carMedia?.stop()
         (application as? MyMusicApp)?.carMedia = null
         carMedia = null

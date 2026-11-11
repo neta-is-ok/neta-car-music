@@ -16,6 +16,7 @@ internal data class PlaybackControlRequest(
     val title: String = "",
     val artist: String = "",
     val mode: String = "",
+    val requestId: String = "",
 )
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
@@ -56,7 +57,7 @@ internal object PlaybackControl {
             if (song != null) require(song.id.isNotBlank() && song.source.isNotBlank()) {
                 "歌曲信息需要 id 和 source"
             }
-            check(vm.playFromBroadcast(song, request.keyword.trim(), source)) {
+            check(vm.playFromBroadcast(song, request.keyword.trim(), source, request.requestId)) {
                 "播放尚未开始，请稍后查询状态"
             }
         }

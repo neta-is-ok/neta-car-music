@@ -4,11 +4,14 @@ import android.app.Activity
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.os.BadParcelableException
 import android.os.Bundle
 import android.os.Process
 import android.os.ResultReceiver
 import androidx.core.content.ContextCompat
 import androidx.core.content.IntentCompat
+import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
 import io.neta.music.MyMusicApp
 import io.neta.music.AppLog
 import kotlinx.coroutines.CancellationException
@@ -42,6 +45,14 @@ import org.json.JSONObject
 class PlaybackBroadcastReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != PlaybackBroadcast.ACTION_CONTROL) return
+        PlaybackBroadcast.decodeError(intent)?.let { error ->
+            if (isOrderedBroadcast) {
+                resultCode = Activity.RESULT_CANCELED
+                setResultExtras(error)
+                resultData = JSONObject(error.keySet().associateWith { error.get(it) }).toString()
+            }
+            return
+        }
         PlaybackBroadcast.logReceived(intent)
         val ordered = isOrderedBroadcast
         val pending = goAsync()
@@ -80,7 +91,23 @@ class PlaybackBroadcastReceiver : BroadcastReceiver() {
 internal object PlaybackBroadcast {
     const val ACTION_CONTROL = "io.neta.music.action.CONTROL"
     const val ACTION_RESULT = "io.neta.music.action.RESULT"
+    /** 只放在本次选中歌曲的 MediaItem 中，不把调用方 Intent 或回调对象传入播放器。 */
+    const val EXTRA_PLAY_REQUEST_ID = "io.neta.music.playback.REQUEST_ID"
+    const val EXTRA_PLAY_REQUEST_ARTIST = "io.neta.music.playback.REQUEST_ARTIST"
     private const val EXTRA_RESULT_RECEIVER = "result_receiver"
+    private var awaitingPlaybackId: String? = null
+
+    /** API 30 读取任意 extra 都会展开整个 Bundle，必须在日志、异步处理和服务转发之前接住解析异常。 */
+    fun decodeError(request: Intent): Bundle? = try {
+        request.getStringExtra("command")
+        // 新系统可能延迟解析 Parcelable；在接收入口读出回调，不能等到回复时才发现格式不兼容。
+        IntentCompat.getParcelableExtra(request, EXTRA_RESULT_RECEIVER, ResultReceiver::class.java)
+        null
+    } catch (error: BadParcelableException) {
+        AppLog.e("PlaybackBroadcast", "无法读取外部播放控制请求", error)
+        PlaybackControl.failure(IllegalArgumentException("播放控制请求格式不兼容，请更新发送请求的应用"))
+    }
+
     suspend fun execute(app: MyMusicApp, intent: Intent): Bundle = PlaybackControl.execute(
         app,
         PlaybackControlRequest(
@@ -92,6 +119,7 @@ internal object PlaybackBroadcast {
             title = intent.getStringExtra("title").orEmpty(),
             artist = intent.getStringExtra("artist").orEmpty(),
             mode = intent.getStringExtra("mode").orEmpty(),
+            requestId = playRequestId(intent).orEmpty(),
         ),
     )
 
@@ -99,6 +127,11 @@ internal object PlaybackBroadcast {
         result.putString("command", request.getStringExtra("command").orEmpty())
         request.getStringExtra("request_id")?.let { result.putString("request_id", it) }
         logPlayEvent(request, result.getString("status").orEmpty(), result)
+        if (result.getString("status") == "error" && request.getStringExtra("command") == "play" &&
+            awaitingPlaybackId == playRequestId(request)
+        ) {
+            awaitingPlaybackId = null
+        }
         val receiver = IntentCompat.getParcelableExtra(request, EXTRA_RESULT_RECEIVER, ResultReceiver::class.java)
         if (receiver != null) {
             // 回调 Binder 随完整请求转交播放服务；只回调用方，不依赖其用户、包名或动态接收器。
@@ -115,14 +148,51 @@ internal object PlaybackBroadcast {
 
     fun logReceived(request: Intent) = logPlayEvent(request, "received", null)
 
+    fun observePlayback(request: Intent) {
+        awaitingPlaybackId = playRequestId(request)
+    }
+
+    fun clearPlaybackObservation() {
+        awaitingPlaybackId = null
+    }
+
+    /** 由服务当前生效的 ExoPlayer 事件调用，不采用 MediaController 的本地乐观状态或 completed。 */
+    fun logPlaying(player: Player) {
+        if (player.isPlaying) finishPlaybackEvent(player.currentMediaItem, "playing", "")
+    }
+
+    /** 换源已经耗尽等确定失败时调用；中间的可恢复播放器错误不提前结束观察。 */
+    fun logPlaybackFailure(item: MediaItem?, message: String) = finishPlaybackEvent(item, "error", message)
+
+    private fun finishPlaybackEvent(item: MediaItem?, phase: String, message: String) {
+        val id = awaitingPlaybackId ?: return
+        val metadata = item?.mediaMetadata ?: return
+        if (metadata.extras?.getString(EXTRA_PLAY_REQUEST_ID) != id) return
+        awaitingPlaybackId = null
+        logPlayEvent(id, phase, Bundle().apply {
+            putBoolean("success", phase == "playing")
+            putString("title", metadata.title?.toString().orEmpty())
+            // 通知歌词可能改写 metadata.artist；请求标记保留真实歌手。
+            putString("artist", metadata.extras?.getString(EXTRA_PLAY_REQUEST_ARTIST).orEmpty())
+            putString("message", message)
+        })
+    }
+
+    private fun playRequestId(request: Intent): String? = request.getStringExtra("request_id")
+        ?.takeIf { it.isNotBlank() && it.length <= 128 }
+
     /**
      * 系统 INFO 事件 v1：只观察带 request_id 的 play，不改变回执或播放行为。
      * 美式按请求和目标用户关联；没有读到日志时仍以已发送结束，不因此等待或重发。
      */
     private fun logPlayEvent(request: Intent, phase: String, result: Bundle?) {
         if (request.getStringExtra("command") != "play") return
-        val requestId = request.getStringExtra("request_id")?.takeIf { it.isNotBlank() && it.length <= 128 } ?: return
-        if (phase !in setOf("received", "accepted", "completed", "error")) return
+        val requestId = playRequestId(request) ?: return
+        logPlayEvent(requestId, phase, result)
+    }
+
+    private fun logPlayEvent(requestId: String, phase: String, result: Bundle?) {
+        if (phase !in setOf("received", "accepted", "completed", "playing", "error")) return
         val event = JSONObject()
             .put("v", 1)
             .put("command", "play")

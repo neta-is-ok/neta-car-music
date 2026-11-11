@@ -103,6 +103,7 @@ import io.neta.music.playback.CrossfadeHandoff
 import io.neta.music.playback.MEDIA_EXTRA_DURATION_MS
 import io.neta.music.playback.NowPlayingShape
 import io.neta.music.playback.PlaybackService
+import io.neta.music.playback.PlaybackBroadcast
 import io.neta.music.playback.SavedCursor
 import io.neta.music.playback.SavedPlayback
 import io.neta.music.playback.SessionLyricsSnapshot
@@ -127,7 +128,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -3077,6 +3080,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         queue: List<CanonicalTrack>,
         pinnedProvider: String?,
         openPlayer: Boolean,
+        playRequestId: String = "",
     ): Boolean {
         // 先取消旧的静音恢复，再异步解析新歌曲；解除静音不能在解析期间恢复旧内容。
         app.carMedia?.cancelResume()
@@ -3126,13 +3130,16 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 "所选平台没有返回可播放地址，已切换到${ready.source.providerName}"
             else -> ""
         }
+        currentCoroutineContext().ensureActive()
         dormant = null
         AppLog.d(
             "Player",
             "起播《${resolvedSong.title}》${source.providerName}${if (local != null) "（本机文件）" else ""}" +
                 "，队列 ${queueSongs.size} 首，从第 ${startIndex.coerceAtLeast(0) + 1} 首",
         )
-        player.setMediaItems(queueSongs.map(::mediaItem), startIndex.coerceAtLeast(0), 0)
+        player.setMediaItems(queueSongs.mapIndexed { index, song ->
+            mediaItem(song, if (index == startIndex.coerceAtLeast(0)) playRequestId else "")
+        }, startIndex.coerceAtLeast(0), 0)
         player.prepare()
         player.play()
         val requestId = base.value.queueId + 1
@@ -3148,7 +3155,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             error = "",
             deepLink = "",
         )
-        verifyQueueApplied(player, requestId)
+        verifyQueueApplied(player, requestId, playRequestId = playRequestId, playTrackId = playableTrack.id)
         rememberCanonical(playableTrack)
         remember("history", historySong(resolvedSong))
         loadLyrics(resolvedSong)
@@ -3159,7 +3166,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
      * MediaController 的命令要经会话转给播放器，会话正好在换播放器（交叉淡化换主）或刚重连时会被顶掉：
      * 界面已经换了歌，播放器却还是上一份队列，听感就是「点了没切」。装上以后核对一次，对不上补装一遍。
      */
-    private fun verifyQueueApplied(player: MediaController, requestId: Int, retried: Boolean = false) {
+    private fun verifyQueueApplied(
+        player: MediaController,
+        requestId: Int,
+        retried: Boolean = false,
+        playRequestId: String = "",
+        playTrackId: String = "",
+    ) {
         viewModelScope.launch {
             fun stillCurrent() = controller === player && base.value.queueId == requestId
             fun applied(): Boolean {
@@ -3183,10 +3196,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             // 补装队列只修正曲目，不撤销等待期间的暂停、后台暂停或车机静音。
             val shouldPlay = player.playWhenReady &&
                 app.carMedia?.let { it.isMuted == true || it.isPausedForMute } != true
-            player.setMediaItems(queue.map(::mediaItem), index, 0)
+            player.setMediaItems(queue.mapIndexed { i, song ->
+                val id = if (base.value.canonicalQueue.getOrNull(i)?.id == playTrackId) playRequestId else ""
+                mediaItem(song, id)
+            }, index, 0)
             player.prepare()
             player.playWhenReady = shouldPlay
-            verifyQueueApplied(player, requestId, retried = true)
+            verifyQueueApplied(player, requestId, retried = true, playRequestId = playRequestId, playTrackId = playTrackId)
         }
     }
 
@@ -4046,7 +4062,15 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun remember(bucket: String, song: Song) =
         app.database.dao().save(SavedSong(song.key, bucket, json.encodeToString(song.forStorage()), System.currentTimeMillis()))
 
-    private fun mediaItem(song: Song): MediaItem {
+    private fun mediaItem(song: Song): MediaItem = mediaItem(song, "")
+
+    /** 同一首歌换源、补地址时保留请求标记；歌曲身份仍以实际替换后的 MediaItem 为准。 */
+    private fun replacementMediaItem(original: MediaItem?, song: Song): MediaItem = mediaItem(
+        song,
+        original?.mediaMetadata?.extras?.getString(PlaybackBroadcast.EXTRA_PLAY_REQUEST_ID).orEmpty(),
+    )
+
+    private fun mediaItem(song: Song, playRequestId: String): MediaItem {
         // Apple 整曲开头那段用的是另一把 key，Provider 单独成了一份清单；地址搭在
         // mediaMetadata.extras 上送到播放侧（tag 过不了 MediaSession 的序列化）
         val introUrl = song.extra[AppleWidevineDrmCallback.EXTRA_DRM_INTRO_URL].orEmpty()
@@ -4055,6 +4079,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         val extras = android.os.Bundle().apply {
             putLong(MEDIA_EXTRA_DURATION_MS, song.duration * 1000L)
             if (introUrl.isNotBlank()) putString(AppleWidevineDrmCallback.EXTRA_DRM_INTRO_URL, introUrl)
+            if (playRequestId.isNotBlank()) {
+                putString(PlaybackBroadcast.EXTRA_PLAY_REQUEST_ID, playRequestId)
+                putString(PlaybackBroadcast.EXTRA_PLAY_REQUEST_ARTIST, song.artist)
+            }
         }
         val builder = MediaItem.Builder().setMediaId(song.key).setUri(song.url).setMediaMetadata(
             MediaMetadata.Builder()
@@ -4193,11 +4221,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         private fun resolveQueueItem(index: Int, track: CanonicalTrack) {
             if (resolvingIndex == index && resolving?.isActive == true) return
             resolvingIndex = index
+            val originalItem = controller?.getMediaItemAt(index)
             resolving = viewModelScope.launch {
                 val local = localFileFor(track)
                 if (local != null) {
                     val resolved = local.first.song.copy(url = local.second)
-                    controller?.replaceMediaItem(index, mediaItem(resolved))
+                    controller?.replaceMediaItem(index, replacementMediaItem(originalItem, resolved))
                     prepareIfStopped()
                     unplayableSkips = 0
                     base.value = base.value.copy(
@@ -4222,7 +4251,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 val at = queueIndexOf(track, index)
                 val currentIndex = controller?.currentMediaItemIndex ?: return@launch
                 if (currentIndex != at) return@launch
-                controller?.replaceMediaItem(at, mediaItem(resolved))
+                controller?.replaceMediaItem(at, replacementMediaItem(originalItem, resolved))
                 prepareIfStopped()
                 unplayableSkips = 0
                 base.value = base.value.copy(
@@ -4299,6 +4328,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 base.value = base.value.copy(playbackNotice = message)
                 return
             }
+            PlaybackBroadcast.logPlaybackFailure(player.currentMediaItem, message)
             unplayableSkips++
             if (!player.hasNextMediaItem() || unplayableSkips >= minOf(base.value.queue.size, MAX_UNPLAYABLE_SKIPS)) {
                 unplayableSkips = 0
@@ -4326,6 +4356,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             // 失败原因必须进日志：DRM 会话这类错误只在 onPlayerError 里露头，UI 提示之外没人看得见。
             // 之前这里一条不打，整曲播放失败时只能看到"整曲就绪"然后每隔 11 秒自动跳下一首。
             val errorIndex = controller?.currentMediaItemIndex ?: -1
+            val failedItem = controller?.currentMediaItem
             AppLog.e(
                 "Player",
                 "播放错误 ${error.errorCodeName}(${error.errorCode}) 《${base.value.queue.getOrNull(errorIndex)?.name.orEmpty()}》: " +
@@ -4362,6 +4393,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             if (live) {
                 val song = queued ?: return
                 if (!allowLiveRetry(song.key)) {
+                    PlaybackBroadcast.logPlaybackFailure(failedItem, "直播中断，点播放重新连接")
                     controller?.pause()
                     base.value = base.value.copy(playbackNotice = "直播中断，点播放重新连接")
                     return
@@ -4377,7 +4409,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     val player = controller
                     if (player != null) {
                         val resolved = local.first.song.copy(url = local.second)
-                        player.replaceMediaItem(index, mediaItem(resolved))
+                        player.replaceMediaItem(index, replacementMediaItem(failedItem, resolved))
                         player.seekTo(position)
                         player.play()
                         base.value = base.value.copy(
@@ -4420,7 +4452,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                         return@launch
                     }
                     val resolved = resolution.source.song.copy(url = resolution.url)
-                    player.replaceMediaItem(at, mediaItem(resolved))
+                    player.replaceMediaItem(at, replacementMediaItem(failedItem, resolved))
                     // 直播没有可续的位置，重连后从直播点接着放
                     if (!live) player.seekTo(position)
                     player.play()
@@ -4442,8 +4474,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     rememberCanonical(result.track)
                     loadLyrics(resolved)
                 } else {
+                    val message = noSourceMessage(result.track, result.resolution)
+                    PlaybackBroadcast.logPlaybackFailure(failedItem, message)
                     controller?.pause()
-                    base.value = base.value.copy(playbackNotice = noSourceMessage(result.track, result.resolution))
+                    base.value = base.value.copy(playbackNotice = message)
                 }
                 failoverInProgress = false
             }
@@ -4596,7 +4630,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             // 解析期间队列变了或已经切走：别把别的歌覆盖掉
             if (playerNow.nextMediaItemIndex != nextIndex) return@launch
             if (base.value.queue.getOrNull(nextIndex)?.key != song.key) return@launch
-            playerNow.replaceMediaItem(nextIndex, mediaItem(resolved))
+            playerNow.replaceMediaItem(nextIndex, replacementMediaItem(playerNow.getMediaItemAt(nextIndex), resolved))
             base.value = base.value.copy(
                 queue = base.value.queue.mapIndexed { i, queued -> if (i == nextIndex) resolved else queued },
                 canonicalQueue = base.value.canonicalQueue.mapIndexed { i, queued -> if (i == nextIndex) resolvedTrack else queued },
@@ -5111,12 +5145,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** 广播点歌沿用聚合搜索、换源与队列逻辑，不打开界面，也不改界面中的搜索结果。 */
-    internal suspend fun playFromBroadcast(song: Song?, keyword: String, source: String): Boolean {
+    internal suspend fun playFromBroadcast(song: Song?, keyword: String, source: String, requestId: String = ""): Boolean {
         settingsReady.first { it }
         awaitController() ?: error("播放器尚未就绪")
         restoreJob?.await()
         val started = if (song != null) {
-            playNow(song, listOf(song), openPlayer = false)
+            val (selected, ordered) = newQueue(song, listOf(song))
+            startTrack(selected, ordered, null, openPlayer = false, playRequestId = requestId)
         } else {
             require(keyword.isNotBlank()) { "请提供 keyword、source + song_id 或 song_json" }
             val all = app.repository.providers().filter { it.search }
@@ -5132,7 +5167,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             val track = result.groups.firstOrNull() ?: error("没有找到匹配的歌曲")
             activeFeed = null
             _playlists.update { it.copy(listenActive = "") }
-            startTrack(track, listOf(track), source.takeIf { it.isNotBlank() }, openPlayer = false)
+            startTrack(track, listOf(track), source.takeIf { it.isNotBlank() }, openPlayer = false, playRequestId = requestId)
         }
         if (!started) error(base.value.playbackNotice.ifBlank { base.value.error.ifBlank { "暂时放不了这首" } })
         return awaitPlaybackStart()

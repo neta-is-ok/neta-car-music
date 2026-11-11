@@ -28,6 +28,7 @@ import org.json.JSONObject
  * - cycle_mode：依次轮换上述四种模式；query_mode：只查询。
  * - play：keyword 搜索后播放首个结果，可带 source 指定平台；也可传 source + song_id，
  *   或 song_json（data.Song 的 JSON，保留平台需要的 extra 等信息）。ID 方式可带 title / artist。
+ *   已有播放队列时插播到当前歌曲之后并立即切过去，唱完接着放原列表；没有队列才新建单曲队列。
  *
  * 可选 result_receiver（平台 ResultReceiver）直接回传结果；未提供时仍发普通结果广播，
  * 默认 action = io.neta.music.action.RESULT，reply_action / reply_package 可指定回传目标。

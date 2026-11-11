@@ -3075,6 +3075,45 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { startTrack(track, queue, pinnedProvider, openPlayer) }
     }
 
+    /** [resolveForStart] 的结果：解析后的曲目、选中的源，以及带好地址、能直接装进播放器的歌。 */
+    private data class StartResolution(
+        val track: CanonicalTrack,
+        val source: TrackSource,
+        val song: Song,
+        val fromLocal: Boolean = false,
+        val preview: Boolean = false,
+        val autoMatched: Boolean = false,
+        val autoNotice: String = "",
+    )
+
+    /**
+     * 把点中的这首解析到能直接起播：本机文件直接用文件地址，在线歌走取流与自动匹配换源。
+     * 放不了时把原因写进 playbackNotice（带深链）并返回 null。
+     */
+    private suspend fun resolveForStart(track: CanonicalTrack, pinnedProvider: String?): StartResolution? {
+        val local = localFileFor(track)
+        if (local != null) {
+            return StartResolution(track, local.first, local.first.song.copy(url = local.second), fromLocal = true)
+        }
+        val result = resolvePlayable(track, pinnedProvider)
+        val ready = result.resolution as? Resolution.Ready
+        if (ready == null) {
+            base.value = base.value.copy(
+                playbackNotice = noSourceMessage(result.track, result.resolution),
+                deepLink = (result.resolution as? Resolution.None)?.deepLink.orEmpty(),
+            )
+            return null
+        }
+        return StartResolution(
+            track = result.track,
+            source = ready.source,
+            song = ready.source.song.copy(url = ready.url),
+            preview = ready.isPreview,
+            autoMatched = result.autoMatched,
+            autoNotice = result.notice,
+        )
+    }
+
     /** 解析 [track] 并把整份队列装进播放器开播；装上了返回 true。 */
     private suspend fun startTrack(
         track: CanonicalTrack,
@@ -3093,49 +3132,28 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         // 队列里已经有这首就照队列给的顺序放（newQueue 已把起点轮转过），从它的位置起播；不在就排到最前面
         val startIndex = queue.indexOfFirst { it.id == track.id }
         val ordered = if (startIndex < 0) (listOf(track) + queue).distinctBy { it.id } else queue.distinctBy { it.id }
-        val local = localFileFor(track)
-        var playableTrack = track
-        var ready: Resolution.Ready? = null
-        var autoMatched = false
-        var autoNotice = ""
-        if (local == null) {
-            val result = resolvePlayable(track, pinnedProvider)
-            playableTrack = result.track
-            ready = result.resolution as? Resolution.Ready
-            autoMatched = result.autoMatched
-            autoNotice = result.notice
-            if (ready == null) {
-                base.value = base.value.copy(
-                    playbackNotice = noSourceMessage(playableTrack, result.resolution),
-                    deepLink = (result.resolution as? Resolution.None)?.deepLink.orEmpty(),
-                )
-                return false
-            }
-        }
+        val resolved = resolveForStart(track, pinnedProvider) ?: return false
+        val playableTrack = resolved.track
         if (pinnedProvider != null) pinnedProviders[playableTrack.id] = pinnedProvider
-        val source = local?.first ?: ready!!.source
-        val resolvedSong = if (local != null) {
-            source.song.copy(url = local.second)
-        } else {
-            source.song.copy(url = ready!!.url)
-        }
+        val source = resolved.source
+        val resolvedSong = resolved.song
         val canonicalQueue = ordered.map { if (it.id == track.id) playableTrack else it }
         val queueSongs = canonicalQueue.map { item ->
             if (item.id == playableTrack.id) resolvedSong else preferredSong(item)
         }
         val fallbackNotice = when {
-            local != null -> ""
-            ready!!.isPreview -> "当前为试听片段"
-            autoMatched -> autoNotice.ifBlank { "原音源不可用，已自动匹配到${ready.source.providerName}" }
-            pinnedProvider != null && ready.source.providerId != pinnedProvider ->
-                "所选平台没有返回可播放地址，已切换到${ready.source.providerName}"
+            resolved.fromLocal -> ""
+            resolved.preview -> "当前为试听片段"
+            resolved.autoMatched -> resolved.autoNotice.ifBlank { "原音源不可用，已自动匹配到${source.providerName}" }
+            pinnedProvider != null && source.providerId != pinnedProvider ->
+                "所选平台没有返回可播放地址，已切换到${source.providerName}"
             else -> ""
         }
         currentCoroutineContext().ensureActive()
         dormant = null
         AppLog.d(
             "Player",
-            "起播《${resolvedSong.title}》${source.providerName}${if (local != null) "（本机文件）" else ""}" +
+            "起播《${resolvedSong.title}》${source.providerName}${if (resolved.fromLocal) "（本机文件）" else ""}" +
                 "，队列 ${queueSongs.size} 首，从第 ${startIndex.coerceAtLeast(0) + 1} 首",
         )
         player.setMediaItems(queueSongs.mapIndexed { index, song ->
@@ -5145,14 +5163,17 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         return if (player.mediaItemCount == 0) base.value.current else queueSongFor(player) ?: base.value.current
     }
 
-    /** 广播点歌沿用聚合搜索、换源与队列逻辑，不打开界面，也不改界面中的搜索结果。 */
+    /**
+     * 广播点歌沿用聚合搜索、换源与队列逻辑，不打开界面，也不改界面中的搜索结果。
+     * 队列里有歌就插播（见 [playRequestNext]），没有才新建单曲队列起播。
+     */
     internal suspend fun playFromBroadcast(song: Song?, keyword: String, source: String, requestId: String = ""): Boolean {
         settingsReady.first { it }
         awaitController() ?: error("播放器尚未就绪")
         restoreJob?.await()
+        val pinned = source.takeIf { it.isNotBlank() }
         val started = if (song != null) {
-            val (selected, ordered) = newQueue(song, listOf(song))
-            startTrack(selected, ordered, null, openPlayer = false, playRequestId = requestId)
+            playRequestNext(canonicalForSong(song), pinned, requestId)
         } else {
             require(keyword.isNotBlank()) { "请提供 keyword、source + song_id 或 song_json" }
             val all = app.repository.providers().filter { it.search }
@@ -5166,12 +5187,83 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             val result = searchEngine.search(keyword, providers).first { it is SearchUpdate.Completed }
                 as SearchUpdate.Completed
             val track = result.groups.firstOrNull() ?: error("没有找到匹配的歌曲")
-            activeFeed = null
-            _playlists.update { it.copy(listenActive = "") }
-            startTrack(track, listOf(track), source.takeIf { it.isNotBlank() }, openPlayer = false, playRequestId = requestId)
+            playRequestNext(track, pinned, requestId)
         }
         if (!started) error(base.value.playbackNotice.ifBlank { base.value.error.ifBlank { "暂时放不了这首" } })
         return awaitPlaybackStart()
+    }
+
+    /**
+     * 外部点歌插播：播放器里已有队列就把点播的这首解析好插到正在放的这首后面并立刻切过去，
+     * 原队列其余不动，唱完接着放回原列表；还没有队列时按原来的样子新建单曲队列起播。
+     */
+    private suspend fun playRequestNext(track: CanonicalTrack, pinnedProvider: String?, requestId: String): Boolean {
+        // 先取消旧的静音恢复，再异步解析新歌曲；解除静音不能在解析期间恢复旧内容。
+        app.carMedia?.cancelResume()
+        val player = controller ?: return false
+        materializeDormant(player)
+        val state = base.value
+        if (player.mediaItemCount == 0 || state.queue.isEmpty()) {
+            activeFeed = null
+            _playlists.update { if (it.listenActive.isEmpty()) it else it.copy(listenActive = "") }
+            return startTrack(track, listOf(track), pinnedProvider, openPlayer = false, playRequestId = requestId)
+        }
+        // 队列里已经有这首：挪到当前这首后面再切过去；点的就是当前这首就接着放
+        val existing = state.canonicalQueue.indexOfFirst { it.id == track.id }
+        if (existing >= 0) {
+            val current = player.currentMediaItemIndex
+            if (existing == current) {
+                player.play()
+                return true
+            }
+            val target = queueMoveNextTarget(existing, current, state.queue.size)
+            val at = target ?: existing
+            if (target != null) {
+                player.moveMediaItem(existing, target)
+                base.value = state.copy(
+                    queue = state.queue.moved(existing, target),
+                    canonicalQueue = if (existing in state.canonicalQueue.indices && target in state.canonicalQueue.indices) {
+                        state.canonicalQueue.moved(existing, target)
+                    } else {
+                        state.canonicalQueue
+                    },
+                )
+            }
+            AppLog.d("Player", "点歌切到队列里已有的《${state.queue[existing].title}》，第 ${at + 1} 首")
+            base.value.current?.let { PlayReportHub.userAction(it.source, PlayEndReason.ChangeQueue) }
+            player.seekTo(at, 0)
+            player.play()
+            return true
+        }
+        val resolved = resolveForStart(track, pinnedProvider) ?: return false
+        if (pinnedProvider != null) pinnedProviders[resolved.track.id] = pinnedProvider
+        // 解析期间 base 可能被别处更新，装进队列前重新读一次
+        val fresh = base.value
+        val at = queueInsertNextAt(player.currentMediaItemIndex, fresh.queue.size)
+        player.addMediaItem(at, mediaItem(resolved.song, requestId))
+        base.value = fresh.copy(
+            queue = fresh.queue.toMutableList().apply { add(at, resolved.song) },
+            canonicalQueue = fresh.canonicalQueue.toMutableList().apply { add(at.coerceAtMost(size), resolved.track) },
+        )
+        AppLog.d(
+            "Player",
+            "点歌插播《${resolved.song.title}》${resolved.source.providerName}，插到第 ${at + 1} 首，队列共 ${fresh.queue.size + 1} 首",
+        )
+        base.value.current?.let { PlayReportHub.userAction(it.source, PlayEndReason.ChangeQueue) }
+        player.seekTo(at, 0)
+        player.play()
+        rememberCanonical(resolved.track)
+        remember("history", historySong(resolved.song))
+        loadLyrics(resolved.song)
+        if (resolved.preview || resolved.autoMatched) {
+            base.value = base.value.copy(
+                playbackNotice = when {
+                    resolved.autoMatched -> resolved.autoNotice.ifBlank { "原音源不可用，已自动匹配到${resolved.source.providerName}" }
+                    else -> "当前为试听片段"
+                },
+            )
+        }
+        return true
     }
 
     /** 组件里点榜单 / 歌单的一行（[startKey]）或“播放全部”“随机播放”：放整份列表，不弹出播放页。 */

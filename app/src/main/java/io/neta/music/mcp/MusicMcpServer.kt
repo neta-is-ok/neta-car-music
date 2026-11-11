@@ -128,7 +128,7 @@ internal class MusicMcpServer(private val app: MyMusicApp) : NanoHTTPD("127.0.0.
         return JSONArray()
             .put(JSONObject()
                 .put("name", "play_song")
-                .put("description", "让吒友爱听立即播放用户想听的歌曲。通常传 keyword（歌名或歌名加歌手）；也支持平台歌曲 ID 或完整歌曲 JSON。复用应用与广播的搜索、音源解析和播放逻辑，不打开界面。")
+                .put("description", "让吒友爱听立即播放用户想听的歌曲。通常传 keyword（歌名或歌名加歌手）；也支持平台歌曲 ID 或完整歌曲 JSON。复用应用与广播的搜索、音源解析和播放逻辑，不打开界面。已有播放队列时插播到当前歌曲之后，唱完接着放原列表。")
                 .put("inputSchema", JSONObject().put("type", "object").put("properties", properties)))
             .put(JSONObject()
                 .put("name", "get_playback_state")

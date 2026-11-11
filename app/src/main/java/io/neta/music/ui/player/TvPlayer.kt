@@ -97,7 +97,7 @@ import kotlin.math.roundToInt
  *
  * 重组边界：环境模式只在进出时重组一次；过渡进度只在测量、摆放和图层里读，播放进度只在小组件和绘制阶段读。
  * 过渡中歌词栏逐帧变高、字号逐帧变大，只重新测量歌词列表，不重组（见 [LyricsList]）。
- * 环境模式里每帧在动的只有背景、封面旋转和当前行的逐字填色，三者共用 30 帧节拍（[TvFrameGate]）。
+ * 环境模式里每帧在动的只有背景、封面旋转和当前行的逐字填色，三者共用 30 帧节拍（[PlayerFrameGate]）。
  */
 @Composable
 internal fun TvPlayer(
@@ -392,6 +392,7 @@ private fun TvDock(
                 live = song.isLive,
                 amplitudeScale = waveScale,
                 waveBpm = waveBpm,
+                visible = !ambient,
             )
             Text(formatTime(duration), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }

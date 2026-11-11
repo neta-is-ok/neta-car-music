@@ -336,12 +336,29 @@ internal class FlowFieldMotion(moving: Boolean) {
 /** 帧循环还没画过任何一帧。 */
 internal const val NO_FRAME_NS = Long.MIN_VALUE
 
-/** 电视上的帧间隔上限：30 帧。 */
-internal const val TV_FRAME_INTERVAL_NS = 1_000_000_000L / 30
+/** 持续播放动画的帧间隔：30 帧，触摸、滚动和界面转场仍跟随屏幕刷新率。 */
+internal const val PLAYER_FRAME_INTERVAL_NS = 1_000_000_000L / 30
+
+/**
+ * 非律动（默认“动态”背景、背景关闭）下持续动画的帧间隔：光团漂移二十多秒一圈、封面自旋四十秒一圈，
+ * 都是慢速运动，12 帧看不出断续；全屏歌词舞台仍用 30 帧，不受此门限制。
+ */
+internal const val AMBIENT_FRAME_INTERVAL_NS = 1_000_000_000L / 12
+
+/**
+ * 非律动下流光背景独有的帧间隔：光团是整屏最慢的东西，8 帧仍看不出断续（换歌交叉淡入那 0.45 秒另走 30 帧）。
+ */
+internal const val FLOW_AMBIENT_INTERVAL_NS = 1_000_000_000L / 8
+
+/**
+ * 非律动下逐字填色的帧间隔：20 帧。实测瓶颈是每帧固定开销而不是像素量（模拟器上 GPU 每帧约 2ms、
+ * 整帧约 6ms），少三分之一帧数比任何单帧优化都省；50ms 一步的扫字仍然顺滑，律动跟拍时仍用 30 帧。
+ */
+internal const val KARAOKE_AMBIENT_INTERVAL_NS = 1_000_000_000L / 20
 
 /**
  * 限帧：离上次推进不到 [minIntervalNanos] 的帧跳过，0 表示不限。留 1/8 的余量，垂直同步时间戳有抖动时
- * 60Hz 上也稳定地隔一帧画一帧（30 帧），不会偶尔拖成隔两帧；50Hz 上是 25 帧，120Hz 上隔三帧画一帧。
+ * 60Hz 上也稳定地隔一帧画一帧（30 帧），不会偶尔拖成隔两帧；50Hz 上是 25 帧，120Hz 上每四帧画一帧。
  */
 internal fun backdropFrameDue(frameNanos: Long, lastNanos: Long, minIntervalNanos: Long): Boolean =
     lastNanos == NO_FRAME_NS || frameNanos - lastNanos >= minIntervalNanos - minIntervalNanos / 8
@@ -372,5 +389,21 @@ internal class FrameGate(private val minIntervalNanos: Long) {
     }
 }
 
-/** 电视上背景、封面旋转和逐字歌词共用的 30 帧节拍：运动都按真实帧间隔积分，少画一半帧不改变速度，只省 GPU。 */
-internal val TvFrameGate = FrameGate(TV_FRAME_INTERVAL_NS)
+/** 背景、封面旋转、逐字歌词和动画舞台共用的 30 帧节拍，运动速度仍按真实时间计算。 */
+internal val PlayerFrameGate = FrameGate(PLAYER_FRAME_INTERVAL_NS)
+
+/** 非律动模式下背景和封面自旋改用的 12 帧节拍：慢速运动省帧看不出，律动跟拍仍走 [PlayerFrameGate]。 */
+internal val AmbientFrameGate = FrameGate(AMBIENT_FRAME_INTERVAL_NS)
+
+/** 非律动模式下流光背景独有的 8 帧节拍；换色 / 换封面的短暂过渡由调用方临时走 [PlayerFrameGate]。 */
+internal val FlowAmbientGate = FrameGate(FLOW_AMBIENT_INTERVAL_NS)
+
+/** 非律动模式下逐字填色改用的 20 帧节拍；律动跟拍仍走 [PlayerFrameGate]。 */
+internal val KaraokeAmbientGate = FrameGate(KARAOKE_AMBIENT_INTERVAL_NS)
+
+/**
+ * 播放页当前是否处于律动跟拍（由 [LyricsBackdrop] 每次组合同步，含背景“关闭”时）。
+ * 逐字填色等拿不到 [BackdropPulse] 的节点按它选帧率：跟拍 30 帧，其余 20 帧。
+ */
+@Volatile
+internal var playerBeatCadence = false

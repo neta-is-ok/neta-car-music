@@ -272,7 +272,7 @@ fun AppearanceSettingsScreen(
                 onCheckedChange = { actions.setReduceMotion(it) },
                 index = 0,
                 count = 1,
-                summary = "关闭形变、波浪和页面转场",
+                summary = "静止背景，封面保留旋转和形变，歌词整句切换并保留换句动画，使用直线进度条",
                 icon = Icons.Filled.Animation,
             )
         }

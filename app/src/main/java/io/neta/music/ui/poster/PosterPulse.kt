@@ -13,7 +13,7 @@ import io.neta.music.ui.player.BackdropPulse
 import io.neta.music.ui.player.FlowFieldMotion
 import io.neta.music.ui.player.RhythmFeed
 import io.neta.music.ui.player.RhythmFeedReader
-import io.neta.music.ui.player.TvFrameGate
+import io.neta.music.ui.player.PlayerFrameGate
 import io.neta.music.ui.player.rememberBackdropPulse
 import io.neta.music.ui.player.rememberSystemAnimationsOff
 import io.neta.music.ui.theme.LocalAppearance
@@ -72,7 +72,7 @@ internal fun rememberPosterPulse(
 }
 
 /**
- * 海报墙上一直在动的小东西（大卡的花瓣旋转、跳动的条、跟拍弹跳）在所有设备上都限 30 帧：和电视用同一个节拍，
+ * 海报墙上一直在动的小东西（大卡的花瓣旋转、跳动的条、跟拍弹跳）在所有设备上都限 30 帧：和播放页用同一个节拍，
  * 几个循环落在同一批垂直同步上，墙不跟着屏幕刷新率一直满帧重画。运动都按真实帧间隔积分，速度不变。
  */
-internal fun wallFrameDue(frameNanos: Long): Boolean = TvFrameGate.due(frameNanos)
+internal fun wallFrameDue(frameNanos: Long): Boolean = PlayerFrameGate.due(frameNanos)

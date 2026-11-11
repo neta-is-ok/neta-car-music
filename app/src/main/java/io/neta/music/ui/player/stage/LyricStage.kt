@@ -49,7 +49,7 @@ import io.neta.music.playback.RhythmTimeline
 import io.neta.music.ui.ParsedLyrics
 import io.neta.music.ui.components.LocalAppWindow
 import io.neta.music.ui.player.RhythmFeed
-import io.neta.music.ui.player.TvFrameGate
+import io.neta.music.ui.player.PlayerFrameGate
 import io.neta.music.ui.player.blobColorCache
 import io.neta.music.ui.player.coverBlobColors
 import io.neta.music.ui.player.rememberSystemAnimationsOff
@@ -238,7 +238,7 @@ private fun StageHost(
         )
     }
 
-    StageFrames(lines, clock, lineIndex, position, playing, reduceMotion, tv, audio, analyzer)
+    StageFrames(lines, clock, lineIndex, position, playing, reduceMotion, audio, analyzer)
 
     Box(Modifier.fillMaxSize().stageEdgeFade(edgeFade)) {
         if (!mode.hostBackground) mode.Background(ctx, Modifier.fillMaxSize().bleedToWindowEdges())
@@ -294,7 +294,7 @@ private fun Modifier.bleedToWindowEdges(): Modifier {
 }
 
 /**
- * 舞台的帧循环。播放中每帧：歌词时间 = 最近一次进度 + 帧间隔外推（不往回跳 120ms 以内的抖动），
+ * 舞台的帧循环，与背景、封面共用 30 帧节拍。歌词时间 = 最近一次进度 + 帧间隔外推（不往回跳 120ms 以内的抖动），
  * 算当前句，取律动帧，再发布时钟。暂停时不跑循环，只在进度变化（跳转）时发布一次；减少动态效果时只在换句时发布。
  */
 @Composable
@@ -305,7 +305,6 @@ private fun StageFrames(
     position: State<Long>,
     playing: Boolean,
     reduceMotion: Boolean,
-    tv: Boolean,
     audio: StageAudio?,
     analyzer: RhythmAnalyzer?,
 ) {
@@ -325,7 +324,7 @@ private fun StageFrames(
         }
         return
     }
-    LaunchedEffect(lines, tv, feed) {
+    LaunchedEffect(lines, feed) {
         var basePos = position.value
         var baseNanos = withFrameNanos { it }
         var lastMs = basePos
@@ -333,7 +332,7 @@ private fun StageFrames(
         var anim = (clock.seconds * 1e9).toLong()
         while (true) {
             withFrameNanos { now ->
-                if (tv && !TvFrameGate.due(now)) return@withFrameNanos
+                if (!PlayerFrameGate.due(now)) return@withFrameNanos
                 val pos = position.value
                 if (pos != basePos) {
                     basePos = pos

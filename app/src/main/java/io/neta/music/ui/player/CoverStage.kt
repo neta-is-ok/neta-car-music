@@ -74,7 +74,6 @@ import io.neta.music.playback.CrossfadeStatus
 import io.neta.music.playback.CrossfadeTransition
 import io.neta.music.playback.NowPlayingShape
 import io.neta.music.ui.CoverBox
-import io.neta.music.ui.components.LocalAppWindow
 import io.neta.music.ui.components.rememberSettlingOffsetState
 import io.neta.music.ui.components.sharedNowPlayingCover
 import io.neta.music.ui.theme.LocalAppearance
@@ -90,7 +89,7 @@ import kotlin.math.sqrt
  * - 形状：[shapeChoice] 为“随机”时每首歌抽一种（[NowPlayingShape]，切歌时由播放层抽好，关掉再开不换）；固定时始终用那一种。
  *   暂停变成圆角方形看全图（慢速空间弹簧），切歌形变到新形状；固定模式切歌形状不变，只交叉淡入封面图。
  * - 旋转：播放时外轮廓 40 秒一圈（没有封面图时转的是首字占位的轮廓），画面本身保持正向；暂停时停下并随形变转回正向。
- *   减少动画时不转、形变直接切换。电视上旋转和背景共用 30 帧节拍（[TvFrameGate]）。
+ *   应用“减少动画”保留旋转和形变（自旋非律动时 12 帧、律动 30 帧）；只有系统“移除动画”才不转、形变直接切换。
  * - [collapsed]：收成圆形（手机歌词页左上角的小封面），光晕淡出，手势和读屏描述交给调用方。
  * - 跟拍（[pulse]）：封面弹一下、光晕亮一下并放大一点，封面轮廓往外散开同形状的光环（画在光晕后面）。
  *
@@ -121,6 +120,9 @@ fun CoverStage(
 ) {
     // 和背景一样把系统“移除动画”当成减少动画：旋转是自己跑的帧循环，不受动画时长缩放影响
     val reduceMotion = LocalAppearance.current.reduceMotion || rememberSystemAnimationsOff()
+    // 应用“减少动画”仍保留封面旋转和形变：自旋是非律动下 12 帧的慢转，形变只在换歌、暂停的片刻跑；
+    // 只有系统“移除动画”才真正停下来。其余（接歌进度环等）仍跟随 [reduceMotion]。
+    val coverMotionOff = rememberSystemAnimationsOff()
     val motion = MaterialTheme.motionScheme
     val songShape = remember(shapeChoice, trackKey) { NowPlayingShape.resolve(shapeChoice, trackKey) }
     val target = when {
@@ -132,9 +134,9 @@ fun CoverStage(
     val stage = remember { CoverStageState(PausedPolygon) }
     val slow = motion.slowSpatialSpec<Float>()
     val default = motion.defaultSpatialSpec<Float>()
-    LaunchedEffect(stage, target, reduceMotion) {
+    LaunchedEffect(stage, target, coverMotionOff) {
         val spec = when {
-            reduceMotion -> null
+            coverMotionOff -> null
             // 歌词页的收放和位移同一条弹簧；暂停 / 继续用慢速空间弹簧
             target === CollapsedPolygon || stage.restsOn(CollapsedPolygon) -> default
             target === PausedPolygon || stage.restsOn(PausedPolygon) -> slow
@@ -142,23 +144,24 @@ fun CoverStage(
         }
         stage.morphTo(target, spec)
     }
-    val spin = !collapsed && ambientSpinEnabled(playing, reduceMotion)
-    val tv = LocalAppWindow.current.isTv
-    LaunchedEffect(stage, spin, reduceMotion, tv) {
+    val spin = !collapsed && ambientSpinEnabled(playing, coverMotionOff)
+    LaunchedEffect(stage, spin, coverMotionOff) {
         when {
             spin -> {
                 var last = withFrameNanos { it }
                 while (true) {
                     withFrameNanos { now ->
-                        // 按真实间隔累加角度：电视上隔一帧才转一次，转速不变
-                        if (!tv || TvFrameGate.due(now)) {
+                        // 按真实间隔累加角度：隔一帧才转一次，转速不变。
+                        // 律动跟拍时用 30 帧节拍；非律动的慢速自旋改走 12 帧省绘制。
+                        val gate = if (pulse?.reactive == true) PlayerFrameGate else AmbientFrameGate
+                        if (gate.due(now)) {
                             stage.angle = advanceSpin(stage.angle, now - last)
                             last = now
                         }
                     }
                 }
             }
-            reduceMotion -> stage.angle = 0f
+            coverMotionOff -> stage.angle = 0f
             // 圆角方形四向对称，转回最近的直角就是正向
             else -> animate(stage.angle, restingAngle(stage.angle), animationSpec = slow) { value, _ -> stage.angle = value }
         }

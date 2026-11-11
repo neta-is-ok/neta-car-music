@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ContainedLoadingIndicator
 import androidx.compose.material3.LinearWavyProgressIndicator
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.WavyProgressIndicatorDefaults
 import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
@@ -34,10 +35,13 @@ import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.Snapshot
+import androidx.compose.runtime.structuralEqualityPolicy
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -72,6 +76,7 @@ import io.neta.music.ui.theme.LocalAppearance
  * 所以这里只适合给变化比 500ms 慢的值（播放页给的是低频慢包络）；逐帧变化的值只会被随机抽样。
  * [waveBpm] 大于 0 时波浪每拍走一个波长（播放页锁上拍子时给），否则每秒一个波长；在这里的组合阶段读，变了只重组进度条。
  * [waveTravel] 为 false 时波浪停在原地不平移（海报墙的大卡）：平移是指示器自己按屏幕刷新率跑的动画，停下来后只在进度变化时重画。
+ * [visible] 为 false 时保留当前画面和尺寸，停止观察播放进度；减少动画时可见刻度按秒更新，拖动仍即时响应。
  */
 @Composable
 fun WavySeekBar(
@@ -87,15 +92,24 @@ fun WavySeekBar(
     waveBpm: () -> Float = { 0f },
     waveTravel: Boolean = true,
     live: Boolean = false,
+    visible: Boolean = true,
 ) {
     val reduceMotion = LocalAppearance.current.reduceMotion
+    val shownPosition = remember(position, reduceMotion, visible) {
+        when {
+            // 淡出期间停在原位置；不订阅隐藏控件里的进度，唤醒时重新接上实时值。
+            !visible -> mutableLongStateOf(Snapshot.withoutReadObservation { position.value })
+            reduceMotion -> derivedStateOf(structuralEqualityPolicy()) { position.value / 1_000L * 1_000L }
+            else -> position
+        }
+    }
     var dragging by remember { mutableStateOf(false) }
     var dragFraction by remember { mutableFloatStateOf(0f) }
     val seek by rememberUpdatedState(onSeek)
     // 只按 10 秒桶让语义/描述重组；拖动时也同样量化，避免每个 move 触发组合
-    val spokenPosition by remember(position, duration) {
+    val spokenPosition by remember(shownPosition, duration) {
         derivedStateOf {
-            val ms = if (dragging) (dragFraction * duration).toLong() else position.value
+            val ms = if (dragging) (dragFraction * duration).toLong() else shownPosition.value
             spokenPositionBucket(ms)
         }
     }
@@ -153,23 +167,35 @@ fun WavySeekBar(
                 },
             contentAlignment = Alignment.Center,
         ) {
-            LinearWavyProgressIndicator(
-                progress = {
-                    when {
-                        live -> 0f
-                        dragging -> dragFraction
-                        duration > 0 -> (position.value.toFloat() / duration).coerceIn(0f, 1f)
-                        else -> 0f
-                    }
-                },
-                modifier = Modifier.fillMaxWidth(),
-                color = color,
-                trackColor = trackColor,
-                // 这个值的变化按 500ms 补间过去，见上面 amplitudeScale 的说明
-                amplitude = { if (playing && !dragging && !reduceMotion) amplitudeScale().coerceIn(0f, 1f) else 0f },
-                wavelength = WavyProgressIndicatorDefaults.LinearDeterminateWavelength,
-                waveSpeed = if (waveTravel) WavyProgressIndicatorDefaults.LinearDeterminateWavelength * waveSpeedFactor(waveBpm()) else 0.dp,
-            )
+            val progress = {
+                when {
+                    live -> 0f
+                    dragging -> dragFraction
+                    duration > 0 -> (shownPosition.value.toFloat() / duration).coerceIn(0f, 1f)
+                    else -> 0f
+                }
+            }
+            if (reduceMotion) {
+                LinearProgressIndicator(
+                    progress = progress,
+                    modifier = Modifier.fillMaxWidth(),
+                    color = color,
+                    trackColor = trackColor,
+                )
+            } else {
+                LinearWavyProgressIndicator(
+                    progress = progress,
+                    modifier = Modifier.fillMaxWidth(),
+                    color = color,
+                    trackColor = trackColor,
+                    // 这个值的变化按 500ms 补间过去，见上面 amplitudeScale 的说明
+                    amplitude = { if (visible && playing && !dragging) amplitudeScale().coerceIn(0f, 1f) else 0f },
+                    wavelength = WavyProgressIndicatorDefaults.LinearDeterminateWavelength,
+                    waveSpeed = if (visible && waveTravel && playing && !dragging && !live) {
+                        WavyProgressIndicatorDefaults.LinearDeterminateWavelength * waveSpeedFactor(waveBpm())
+                    } else 0.dp,
+                )
+            }
         }
         if (showTimes) {
             if (live) {
@@ -179,7 +205,7 @@ fun WavySeekBar(
                 }
             } else {
                 ProgressTimes(
-                    position = position,
+                    position = shownPosition,
                     duration = duration,
                     dragging = { dragging },
                     dragFraction = { dragFraction },

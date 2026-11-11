@@ -69,7 +69,6 @@ import io.neta.music.playback.PlaybackClock
 import io.neta.music.playback.RhythmAnalyzer
 import io.neta.music.playback.RhythmFrame
 import io.neta.music.playback.RhythmTimeline
-import io.neta.music.ui.components.LocalAppWindow
 import io.neta.music.ui.theme.LocalAppearance
 import io.neta.music.ui.theme.LocalSeedColor
 import io.neta.music.ui.theme.coverColorCacheKey
@@ -186,7 +185,7 @@ fun rememberBackdropPulse(): BackdropPulse = remember { BackdropPulse() }
  * 律动时段落的强弱调流速、光团大小和光量；拍子按此刻听到的位置起拍（[rhythmOffsetMs] 是跟拍校准，正数让画面晚一点），
  * 推一把流光，并通过 [pulse] 让封面弹跳、光晕跟拍、封面轮廓散开光环。
  * 减少动画（应用设置或系统“移除动画”）时定格成静止的流光场，不跑帧循环也不做分析。
- * 封面和光团画在 1/2（电视 1/4）分辨率的离屏图层里再放大，只有 [scrim] 遮罩按全分辨率画在最上面；
+ * 封面和光团画在 1/4 分辨率的离屏图层里再放大，只有 [scrim] 遮罩按全分辨率画在最上面；
  * 换遮罩样式（如进入歌词页）时淡变过去。
  */
 @Composable
@@ -203,12 +202,13 @@ fun LyricsBackdrop(
 ) {
     // 系统“移除动画”（动画时长缩放为 0）按应用里的“减少动画”处理：原来的 rememberInfiniteTransition 会自己停，帧循环不会
     val reduceMotion = LocalAppearance.current.reduceMotion || rememberSystemAnimationsOff()
-    val tv = LocalAppWindow.current.isTv
     val context = LocalContext.current
     val analyzer = remember(context) { (context.applicationContext as? MyMusicApp)?.rhythmAnalyzer }
     val reactive = mode == LyricsBackgroundMode.Reactive && !reduceMotion && analyzer != null
     SideEffect {
         pulse.reactive = reactive
+        // 逐字填色等拿不到 pulse 的节点按同一判据选帧率
+        playerBeatCadence = reactive
         pulse.intensity = intensity
         if (mode == LyricsBackgroundMode.Off || reduceMotion) pulse.clear()
     }
@@ -220,7 +220,7 @@ fun LyricsBackdrop(
     val scheme = MaterialTheme.colorScheme
     val moving = playing && !reduceMotion
     val motion = remember { FlowFieldMotion(moving) }
-    // 帧计数只在绘制 / 图层回调里读，60/120Hz 推进时只重画背景，不重组播放页
+    // 帧计数只在绘制 / 图层回调里读，只重画背景，不重组播放页
     val tick = remember { mutableIntStateOf(0) }
     val feed = remember(analyzer) { analyzer?.let(::RhythmFeedReader) }
     if (reactive && analyzer != null) RhythmFeed(analyzer, playing)
@@ -252,11 +252,17 @@ fun LyricsBackdrop(
         }
     }
     if (!reduceMotion) {
-        LaunchedEffect(motion, moving, reactive, covers.current, palette.to, tv, offsetUs) {
-            // 电视上限 30 帧，和封面旋转、逐字歌词落在同一批垂直同步上（见 TvFrameGate）
+        LaunchedEffect(motion, moving, reactive, covers.current, palette.to, offsetUs) {
+            // 和封面旋转、逐字歌词落在同一批垂直同步上；非律动时流光改走 8 帧慢节拍，
+            // 换封面 / 换色的 0.45 秒交叉淡入期间临时回到 30 帧，过渡不出现台阶
             while (true) {
                 val settled = withFrameNanos { now ->
-                    if (tv && !TvFrameGate.due(now)) return@withFrameNanos false
+                    val gate = when {
+                        reactive -> PlayerFrameGate
+                        motion.coverFade < 1f || motion.colorFade < 1f -> PlayerFrameGate
+                        else -> FlowAmbientGate
+                    }
+                    if (!gate.due(now)) return@withFrameNanos false
                     if (reactive && feed != null) feed.feedUntil(now, offsetUs, motion) else motion.beatTimeS = Double.NaN
                     motion.advanceTo(now)
                     pulse.publish(motion)
@@ -276,7 +282,7 @@ fun LyricsBackdrop(
     LaunchedEffect(scrimBlend, scrim) { scrimBlend.animateTo(scrim, scrimSpec) }
 
     val surface = scheme.surface
-    val downscale = if (tv) TV_FIELD_DOWNSCALE else FIELD_DOWNSCALE
+    val downscale = FIELD_DOWNSCALE
     // 流光层已经缩小 downscale 倍，封面节点相对屏幕仍是 1/COVER_DOWNSCALE，模糊半径不变
     val coverDownscale = COVER_DOWNSCALE / downscale
     Box(modifier.fillMaxSize().clipToBounds()) {
@@ -366,7 +372,7 @@ private fun playerTargetScheme(): ColorScheme {
 
 /**
  * 按 1/[factor] 的尺寸布局、再用离屏图层放大回原尺寸：图层里的每一遍绘制只填 1/factor² 的像素，
- * 最后整张图层双线性放大画一遍。流光本来就是模糊的，看不出分辨率降低；原型也是画在半分辨率画布上。
+ * 最后整张图层双线性放大画一遍。这里只缩小模糊的流光，歌词、封面和控件仍按原分辨率绘制。
  */
 private fun Modifier.reducedResolution(factor: Int): Modifier = layout { measurable, constraints ->
     val width = constraints.maxWidth
@@ -680,8 +686,7 @@ private const val BACKDROP_COVER_PX = 24
 private const val COLOR_SAMPLE_PX = 128
 private const val COVER_SCALE = 1.7f
 private const val COVER_DOWNSCALE = 8f
-private const val FIELD_DOWNSCALE = 2
-private const val TV_FIELD_DOWNSCALE = 4
+private const val FIELD_DOWNSCALE = 4
 private const val UNIT = 256f
 private const val MIN_BLOB_TONE = 30.0
 private const val MAX_BLOB_TONE = 72.0

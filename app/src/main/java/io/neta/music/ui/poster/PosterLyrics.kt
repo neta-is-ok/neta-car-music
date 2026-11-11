@@ -447,7 +447,7 @@ private fun LyricText(
         val karaoke = remember(lines, index, duration) { posterKaraokeLine(lines, index, duration) }
         if (karaoke.words.isNotEmpty()) {
             // 和花瓣旋转、跳动的条一起限 30 帧（见 wallFrameDue），墙不跟着屏幕刷新率满帧重画
-            KaraokeLine(karaoke, position, playing.value, style, capFrames = true)
+            KaraokeLine(karaoke, position, playing.value, style)
             return
         }
     }

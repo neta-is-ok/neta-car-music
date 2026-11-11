@@ -9,6 +9,7 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -90,7 +91,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.neta.music.ui.LyricLine
 import io.neta.music.ui.ParsedLyrics
-import io.neta.music.ui.components.LocalAppWindow
 import io.neta.music.ui.components.distinctKeys
 import io.neta.music.ui.components.tvFocusRing
 import io.neta.music.ui.theme.LocalAppearance
@@ -449,10 +449,13 @@ fun LyricsList(
     playing: Boolean = false,
     sizing: LyricsSizing,
 ) = LyricsTextScope {
+    // 换句的滚动、放大和预设字号过渡不受应用“减少动画”影响：它们只在切行 / 换预设的零点几秒里跑，
+    // 不是持续动画，保留下来极简模式仍然是静置的；只有系统“移除动画”才真正直接切。
+    val switchMotionOff = rememberSystemAnimationsOff()
     // 列表状态在空/加载分支之前创建：切换歌词时 LazyColumn 重建也能接回原滚动位置。
     val list = rememberLazyListState()
     // 换预设时字号、行距、锚点一起过渡；这三个值只在布局阶段读取，过渡期间不重组
-    val spatial = MaterialTheme.motionScheme.slowSpatialSpec<Float>()
+    val spatial = if (switchMotionOff) snap<Float>() else MaterialTheme.motionScheme.slowSpatialSpec<Float>()
     val base = animateFloatAsState(sizing.baseSp, spatial, label = "lyricBase")
     val grow = animateFloatAsState(sizing.grow, spatial, label = "lyricGrow")
     val gap = animateFloatAsState(sizing.gapDp, spatial, label = "lyricGap")
@@ -475,11 +478,11 @@ fun LyricsList(
     val typography = MaterialTheme.typography.titleLarge
     // 所有行都按当前行放大后的字号排版：当前行图层不缩放，字是原大栅格化的；其他行缩小显示。
     // 非当前行一直带着缩放、换行时还要连续缩放，Animated 让字形不按像素取整，缩放过程中字不抖
-    val style = remember(typography, layoutSp) {
+    val style = remember(typography, layoutSp, switchMotionOff) {
         typography.copy(
             fontSize = layoutSp.sp,
             lineHeight = (layoutSp * LyricLineHeight).sp,
-            textMotion = TextMotion.Animated,
+            textMotion = if (switchMotionOff) TextMotion.Static else TextMotion.Animated,
         )
     }
     // 播放/暂停只有当前行的逐字填色关心，以 State 下传，其他行不跟着重组
@@ -578,10 +581,12 @@ private fun LyricsAutoScroll(
     anchor: State<Float>,
 ) {
     val activeIndex = active.value
-    val spec = MaterialTheme.motionScheme.slowSpatialSpec<Float>()
+    // 换句滚动只在系统“移除动画”时直接定位；应用“减少动画”保留（见 LyricsList 的说明）
+    val switchMotionOff = rememberSystemAnimationsOff()
+    val spec = if (switchMotionOff) null else MaterialTheme.motionScheme.slowSpatialSpec<Float>()
     // 换了一份歌词后第一次直接定位，不从上一首的滚动位置滑过来
     val placed = remember(lyrics) { mutableStateOf(false) }
-    LaunchedEffect(activeIndex, manualAt, sizing, lyrics) {
+    LaunchedEffect(activeIndex, manualAt, sizing, lyrics, switchMotionOff) {
         if (activeIndex < 0) return@LaunchedEffect
         val since = System.currentTimeMillis() - manualAt
         if (since < 3_000) delay(3_000 - since)
@@ -639,10 +644,12 @@ private fun LyricRow(
     val edge = remember(index, edgeOf) { derivedStateOf(structuralEqualityPolicy()) { edgeOf(index) } }
     val current = distance == 0
     val motion = MaterialTheme.motionScheme
+    // 换行的透明度和放大过渡只在系统“移除动画”时直接切；应用“减少动画”保留（见 LyricsList 的说明）
+    val switchMotionOff = rememberSystemAnimationsOff()
     // 透明度、缩放都只在布局和 graphicsLayer 里读取，动画逐帧不重组
-    val emphasis = animateFloatAsState(distance.toFloat(), motion.defaultEffectsSpec(), label = "lyricEmphasis")
+    val emphasis = animateFloatAsState(distance.toFloat(), if (switchMotionOff) snap() else motion.defaultEffectsSpec(), label = "lyricEmphasis")
     // 放大进度：0 常规行，1 当前行；放大倍数本身在列表层过渡，换预设时不用每行各起一个动画
-    val lift = animateFloatAsState(if (current) 1f else 0f, motion.slowSpatialSpec(), label = "lyricLift")
+    val lift = animateFloatAsState(if (current) 1f else 0f, if (switchMotionOff) snap() else motion.slowSpatialSpec(), label = "lyricLift")
     val origin = if (LocalLayoutDirection.current == LayoutDirection.Rtl) TransformOrigin(1f, 0.5f) else TransformOrigin(0f, 0.5f)
     val layerScale = { lyricLayerScale(lyricVisualSp(base.value, grow.value, lift.value), layoutSp) }
     val translationStyle = remember(style, layoutSp) {
@@ -736,8 +743,7 @@ private fun LyricRow(
 /**
  * 逐字卡拉OK行：底层暗字、上层亮字按各字起止时间裁剪。播放进度 100ms 刷新一次，
  * 播放中用帧时钟在两次校准之间线性外推；时间只在 draw 阶段读取，逐帧变化不触发列表重组。
- * 电视上和背景、封面旋转共用 30 帧节拍（[TvFrameGate]），十英尺外看不出填色少了一半帧；
- * [capFrames] 为 true 时（海报墙的大卡）手机、平板上也限 30 帧。
+ * 和背景、封面旋转共用 30 帧节拍（[PlayerFrameGate]），只有正在填色的字重画。
  * [playing] 为 false 时停在当前进度，不跑帧循环。
  */
 @Composable
@@ -746,19 +752,41 @@ internal fun KaraokeLine(
     position: State<Long>,
     playing: Boolean,
     style: TextStyle,
-    capFrames: Boolean = LocalAppWindow.current.isTv,
 ) {
+    // 极简显示只按句高亮，不建逐字节点，也不启动持续更新的帧时钟。
+    if (LocalAppearance.current.reduceMotion || rememberSystemAnimationsOff()) {
+        Text(
+            line.text,
+            modifier = Modifier.fillMaxWidth(),
+            style = style,
+            fontWeight = FontWeight.Black,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        return
+    }
     val now = remember { mutableLongStateOf(0L) }
-    LaunchedEffect(position.value, playing, capFrames) {
+    LaunchedEffect(line, position, playing) {
         if (!playing) {
-            now.longValue = position.value
+            snapshotFlow { position.value }.collect { now.longValue = it }
             return@LaunchedEffect
         }
-        val base = position.value
-        val startNanos = withFrameNanos { it }
+        var base = position.value
+        var startNanos = withFrameNanos { it }
+        var last = base
         while (true) {
             withFrameNanos { frameNanos ->
-                if (!capFrames || TvFrameGate.due(frameNanos)) now.longValue = base + (frameNanos - startNanos) / 1_000_000
+                // 律动跟拍 30 帧；非律动的扫字 20 帧已够顺，省下每帧固定开销
+                val gate = if (playerBeatCadence) PlayerFrameGate else KaraokeAmbientGate
+                if (!gate.due(frameNanos)) return@withFrameNanos
+                val pos = position.value
+                if (pos != base) {
+                    base = pos
+                    startNanos = frameNanos
+                }
+                val estimate = base + (frameNanos - startNanos) / 1_000_000
+                // 同一行内小幅校准不回退；点击歌词或拖进度的大幅跳转仍立即跟随。
+                last = if (estimate < last && last - estimate < 120L) last else estimate
+                now.longValue = last
             }
         }
     }
@@ -770,6 +798,12 @@ internal fun KaraokeLine(
         modifier = Modifier.fillMaxWidth().clearAndSetSemantics { contentDescription = line.text },
     ) {
         for ((wordIndex, word) in words.withIndex()) {
+            val progress = remember(word, now) {
+                derivedStateOf(structuralEqualityPolicy()) {
+                    ((now.longValue - word.startMs).toFloat() /
+                        (word.endMs - word.startMs).coerceAtLeast(1L)).coerceIn(0f, 1f)
+                }
+            }
             // 与整行文本一致：首行首字去前导空格、末字去尾随空格
             val text = word.text
                 .let { if (wordIndex == 0) it.trimStart() else it }
@@ -784,10 +818,9 @@ internal fun KaraokeLine(
                     modifier = Modifier
                         .matchParentSize()
                         .drawWithContent {
-                            val progress = ((now.longValue - word.startMs).toFloat() /
-                                (word.endMs - word.startMs).coerceAtLeast(1L)).coerceIn(0f, 1f)
-                            if (progress > 0f) {
-                                clipRect(0f, 0f, size.width * progress, size.height) {
+                            val fraction = progress.value
+                            if (fraction > 0f) {
+                                clipRect(0f, 0f, size.width * fraction, size.height) {
                                     this@drawWithContent.drawContent()
                                 }
                             }

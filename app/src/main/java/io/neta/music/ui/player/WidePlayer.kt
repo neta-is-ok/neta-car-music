@@ -209,7 +209,7 @@ internal fun WidePlayer(
                 {
                     if (showDefault) {
                         WideGuard(idle, lyricsMode, Modifier.graphicsLayer { alpha = defaultChrome() }) {
-                            WavySeekBar(position, duration, playing, actions::seek, Modifier.fillMaxWidth(), amplitudeScale = waveScale, waveBpm = waveBpm, live = song.isLive)
+                            WavySeekBar(position, duration, playing && !idle.idle, actions::seek, Modifier.fillMaxWidth(), amplitudeScale = waveScale, waveBpm = waveBpm, live = song.isLive, visible = !idle.idle)
                         }
                     }
                 },

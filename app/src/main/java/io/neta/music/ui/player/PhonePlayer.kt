@@ -530,6 +530,7 @@ private fun PhoneControls(
                 amplitudeScale = waveScale,
                 waveBpm = waveBpm,
                 live = song.isLive,
+                visible = awake,
             )
             // 矮窗口：小号按钮组，工具栏已经并进顶栏
             TransportButtonGroup(
@@ -665,7 +666,7 @@ private fun PhoneLyricsPage(
                 IdleGuard(idle, false, Modifier.padding(start = 20.dp, end = 16.dp, bottom = 8.dp).graphicsLayer { this.alpha = chrome.value }) {
                     val awake = !idle.idle
                     Column {
-                        WavySeekBar(position, duration, playing && awake, actions::seek, Modifier.padding(start = 4.dp, end = 8.dp), amplitudeScale = waveScale, waveBpm = waveBpm, live = song.isLive)
+                        WavySeekBar(position, duration, playing && awake, actions::seek, Modifier.padding(start = 4.dp, end = 8.dp), amplitudeScale = waveScale, waveBpm = waveBpm, live = song.isLive, visible = awake)
                         Row(
                             Modifier.fillMaxWidth().padding(top = 4.dp),
                             verticalAlignment = Alignment.CenterVertically,

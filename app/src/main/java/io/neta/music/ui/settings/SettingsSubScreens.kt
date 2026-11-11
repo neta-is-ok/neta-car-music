@@ -149,6 +149,7 @@ import io.neta.music.ui.theme.CustomSeedSwatches
 import io.neta.music.ui.theme.FontScale
 import io.neta.music.ui.theme.LayoutMode
 import io.neta.music.ui.theme.LocalAppearance
+import io.neta.music.ui.theme.LyricsAlignment
 import io.neta.music.ui.theme.LyricsTextScope
 import io.neta.music.ui.theme.SchemeStyle
 import kotlinx.coroutines.Dispatchers
@@ -167,7 +168,7 @@ private fun contrastLabel(value: Float): String = when {
 }
 
 /**
- * 外观：文字、歌词字号与配色。字号较大时选项自动换行。
+ * 外观：文字、歌词字号与对齐、配色。字号较大时选项自动换行。
  */
 @Composable
 fun AppearanceSettingsScreen(
@@ -214,8 +215,26 @@ fun AppearanceSettingsScreen(
         }
         item(key = "lyricsFontPreview", contentType = "textPreview") {
             LyricsTextScope {
-                Text("听见音乐，也看清每一句", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(vertical = 12.dp))
+                Text(
+                    "听见音乐，也看清每一句",
+                    style = MaterialTheme.typography.headlineSmall,
+                    textAlign = appearance.lyricsAlignment.align,
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                )
             }
+        }
+        item(key = "lyricsAlignHead", contentType = "sectionHeader") { SectionLabel("歌词对齐") }
+        item(key = "lyricsAlign", contentType = "toggleGroup") {
+            ConnectedToggleGroup(
+                options = LyricsAlignment.entries,
+                selected = appearance.lyricsAlignment,
+                onSelect = actions::setLyricsAlignment,
+                label = { it.label },
+                modifier = groupWidth,
+            )
+        }
+        item(key = "lyricsAlignNote", contentType = "note") {
+            SettingsNote("只调整播放页歌词列表的排布；全屏歌词动画和海报墙保持各自的排版。")
         }
         item(key = "layoutHead", contentType = "sectionHeader") { SectionLabel("布局模式") }
         item(key = "layout", contentType = "layoutOptions") {

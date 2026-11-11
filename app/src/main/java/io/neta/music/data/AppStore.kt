@@ -202,6 +202,7 @@ class SettingsStore(private val context: Context) {
     private val sidebarTextSpKey = intPreferencesKey("sidebar_text_sp")
     private val lyricsFollowAppTextKey = booleanPreferencesKey("lyrics_follow_app_text")
     private val lyricsFontScaleKey = floatPreferencesKey("lyrics_font_scale")
+    private val lyricsAlignmentKey = stringPreferencesKey("lyrics_alignment")
     private val lastSeedKey = intPreferencesKey("last_seed")
     private val sleepFadeKey = booleanPreferencesKey("sleep_fade")
     private val crossfadeEnabledKey = booleanPreferencesKey("crossfade_enabled")
@@ -324,6 +325,7 @@ class SettingsStore(private val context: Context) {
             sidebarTextSp = values[sidebarTextSpKey] ?: 20,
             lyricsFollowAppText = values[lyricsFollowAppTextKey] ?: true,
             lyricsFontScale = values[lyricsFontScaleKey] ?: 1.3f,
+            lyricsAlignment = values[lyricsAlignmentKey] ?: "Start",
             lastSeed = values[lastSeedKey] ?: 0,
             sleepFade = values[sleepFadeKey] ?: true,
             crossfadeEnabled = values[crossfadeEnabledKey] ?: false,
@@ -360,6 +362,7 @@ class SettingsStore(private val context: Context) {
     suspend fun sidebarTextSp(value: Int) = context.dataStore.edit { it[sidebarTextSpKey] = value }
     suspend fun lyricsFollowAppText(value: Boolean) = context.dataStore.edit { it[lyricsFollowAppTextKey] = value }
     suspend fun lyricsFontScale(value: Float) = context.dataStore.edit { it[lyricsFontScaleKey] = value }
+    suspend fun lyricsAlignment(value: String) = context.dataStore.edit { it[lyricsAlignmentKey] = value }
     suspend fun lyricsBackground(value: LyricsBackgroundMode) = context.dataStore.edit { it[lyricsBackgroundKey] = value.name }
     suspend fun notificationLyrics(value: Boolean) = context.dataStore.edit { it[notificationLyricsKey] = value }
     suspend fun rhythmIntensity(value: RhythmIntensity) = context.dataStore.edit { it[rhythmIntensityKey] = value.name }
@@ -681,6 +684,8 @@ data class AppSettings(
     val sidebarTextSp: Int = 20,
     val lyricsFollowAppText: Boolean = true,
     val lyricsFontScale: Float = 1.3f,
+    /** 歌词列表对齐（LyricsAlignment.name），默认 Start 左对齐。 */
+    val lyricsAlignment: String = "Start",
     val lastSeed: Int = 0,
     val sleepFade: Boolean = true,
     /** 切歌过渡总开关：自动接下一首时把上一首的结尾和下一首的开头叠起来。 */

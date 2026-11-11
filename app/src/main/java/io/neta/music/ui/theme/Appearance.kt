@@ -3,6 +3,7 @@ package io.neta.music.ui.theme
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.text.style.TextAlign
 import com.materialkolor.PaletteStyle
 import kotlin.math.abs
 
@@ -50,6 +51,27 @@ enum class FontScale(val label: String, val scale: Float) {
     }
 }
 
+/**
+ * 歌词列表对齐：Start / End 跟随布局方向（中文左起即左对齐 / 靠右），
+ * 只作用于播放页的经典歌词列表，全屏歌词动画和海报墙各有自己的排版。
+ */
+enum class LyricsAlignment(val label: String) {
+    Start("左对齐"),
+    Center("居中"),
+    End("靠右");
+
+    val align: TextAlign
+        get() = when (this) {
+            Start -> TextAlign.Start
+            Center -> TextAlign.Center
+            End -> TextAlign.End
+        }
+
+    companion object {
+        fun of(name: String?): LyricsAlignment = entries.firstOrNull { it.name == name } ?: Start
+    }
+}
+
 /** 外观设置的完整快照，主题层只读这一个对象。 */
 @Immutable
 data class Appearance(
@@ -65,6 +87,7 @@ data class Appearance(
     val sidebarTextSp: Int = 20,
     val lyricsFollowAppText: Boolean = true,
     val lyricsFontScale: FontScale = FontScale.Larger,
+    val lyricsAlignment: LyricsAlignment = LyricsAlignment.Start,
     val reduceMotion: Boolean = false,
     val lastSeed: Int = 0,
 ) {

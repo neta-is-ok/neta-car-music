@@ -2,6 +2,7 @@ package io.neta.music.ui.player
 
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
+import io.neta.music.ui.theme.LyricsAlignment
 import io.neta.music.ui.theme.LyricsTextScope
 import android.content.Context
 import android.view.accessibility.AccessibilityManager
@@ -476,12 +477,14 @@ fun LyricsList(
     val lines = remember(lyrics) { lyrics.displayLines() }
     val lyricKeys = remember(lines) { distinctKeys(lines) { it.timeMs.toString() } }
     val typography = MaterialTheme.typography.titleLarge
+    val alignment = LocalAppearance.current.lyricsAlignment
     // 所有行都按当前行放大后的字号排版：当前行图层不缩放，字是原大栅格化的；其他行缩小显示。
     // 非当前行一直带着缩放、换行时还要连续缩放，Animated 让字形不按像素取整，缩放过程中字不抖
-    val style = remember(typography, layoutSp, switchMotionOff) {
+    val style = remember(typography, layoutSp, switchMotionOff, alignment) {
         typography.copy(
             fontSize = layoutSp.sp,
             lineHeight = (layoutSp * LyricLineHeight).sp,
+            textAlign = alignment.align,
             textMotion = if (switchMotionOff) TextMotion.Static else TextMotion.Animated,
         )
     }
@@ -521,6 +524,7 @@ fun LyricsList(
                 base = base,
                 grow = grow,
                 gap = gap,
+                alignment = alignment,
                 position = position,
                 playing = playingState,
                 edgeOf = edgeOf,
@@ -633,6 +637,7 @@ private fun LyricRow(
     base: State<Float>,
     grow: State<Float>,
     gap: State<Float>,
+    alignment: LyricsAlignment,
     position: State<Long>?,
     playing: State<Boolean>,
     edgeOf: (Int) -> LyricEdge?,
@@ -650,7 +655,12 @@ private fun LyricRow(
     val emphasis = animateFloatAsState(distance.toFloat(), if (switchMotionOff) snap() else motion.defaultEffectsSpec(), label = "lyricEmphasis")
     // 放大进度：0 常规行，1 当前行；放大倍数本身在列表层过渡，换预设时不用每行各起一个动画
     val lift = animateFloatAsState(if (current) 1f else 0f, if (switchMotionOff) snap() else motion.slowSpatialSpec(), label = "lyricLift")
-    val origin = if (LocalLayoutDirection.current == LayoutDirection.Rtl) TransformOrigin(1f, 0.5f) else TransformOrigin(0f, 0.5f)
+    // 缩放锚点跟着对齐走：非当前行缩小时文字朝对齐一侧收，居中、靠右的字才不会横着漂
+    val origin = when (alignment) {
+        LyricsAlignment.Start -> if (LocalLayoutDirection.current == LayoutDirection.Rtl) TransformOrigin(1f, 0.5f) else TransformOrigin(0f, 0.5f)
+        LyricsAlignment.Center -> TransformOrigin(0.5f, 0.5f)
+        LyricsAlignment.End -> if (LocalLayoutDirection.current == LayoutDirection.Rtl) TransformOrigin(0f, 0.5f) else TransformOrigin(1f, 0.5f)
+    }
     val layerScale = { lyricLayerScale(lyricVisualSp(base.value, grow.value, lift.value), layoutSp) }
     val translationStyle = remember(style, layoutSp) {
         style.copy(
@@ -716,7 +726,7 @@ private fun LyricRow(
         ) {
             // 逐字数据只用于当前行：其他行保持整行文本，避免列表里出现成倍的字级节点
             if (current && synced && line.words.isNotEmpty() && position != null) {
-                KaraokeLine(line, position, playing.value, style)
+                KaraokeLine(line, position, playing.value, style, alignment)
             } else {
                 Text(
                     line.text,
@@ -752,6 +762,7 @@ internal fun KaraokeLine(
     position: State<Long>,
     playing: Boolean,
     style: TextStyle,
+    alignment: LyricsAlignment = LyricsAlignment.Start,
 ) {
     // 极简显示只按句高亮，不建逐字节点，也不启动持续更新的帧时钟。
     if (LocalAppearance.current.reduceMotion || rememberSystemAnimationsOff()) {
@@ -796,6 +807,11 @@ internal fun KaraokeLine(
     FlowRow(
         // 每个字是暗字、亮字两层 Text，读屏会逐字、每字两遍地读；整行只读一遍原文。点按跳转的语义在外层行上，合并后照常可用
         modifier = Modifier.fillMaxWidth().clearAndSetSemantics { contentDescription = line.text },
+        horizontalArrangement = when (alignment) {
+            LyricsAlignment.Start -> Arrangement.Start
+            LyricsAlignment.Center -> Arrangement.Center
+            LyricsAlignment.End -> Arrangement.End
+        },
     ) {
         for ((wordIndex, word) in words.withIndex()) {
             val progress = remember(word, now) {

@@ -148,6 +148,7 @@ import io.neta.music.ui.theme.ColorSource
 import io.neta.music.ui.theme.CoverSeedRepository
 import io.neta.music.ui.theme.FontScale
 import io.neta.music.ui.theme.LayoutMode
+import io.neta.music.ui.theme.LyricsAlignment
 import io.neta.music.ui.theme.SchemeStyle
 import io.neta.music.ui.theme.isTelevision
 import kotlinx.coroutines.flow.combine
@@ -5219,6 +5220,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun setSidebarTextSize(value: Int) = viewModelScope.launch { app.settings.sidebarTextSp(value) }
     fun setLyricsFollowAppText(value: Boolean) = viewModelScope.launch { app.settings.lyricsFollowAppText(value) }
     fun setLyricsFontScale(value: FontScale) = viewModelScope.launch { app.settings.lyricsFontScale(value.scale) }
+    fun setLyricsAlignment(value: LyricsAlignment) = viewModelScope.launch { app.settings.lyricsAlignment(value.name) }
 
     // ---------- sleep timer ----------
 
@@ -6005,6 +6007,7 @@ internal fun AppSettings.toAppearance() = Appearance(
     sidebarTextSp = sidebarTextSp,
     lyricsFollowAppText = lyricsFollowAppText,
     lyricsFontScale = FontScale.of(lyricsFontScale),
+    lyricsAlignment = LyricsAlignment.of(lyricsAlignment),
     reduceMotion = reduceMotion,
     lastSeed = lastSeed,
 )

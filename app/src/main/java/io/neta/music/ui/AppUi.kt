@@ -233,6 +233,7 @@ class MusicActions(private val model: MusicViewModel) {
     fun setSidebarTextSize(value: Int) = model.setSidebarTextSize(value)
     fun setLyricsFollowAppText(value: Boolean) = model.setLyricsFollowAppText(value)
     fun setLyricsFontScale(value: io.neta.music.ui.theme.FontScale) = model.setLyricsFontScale(value)
+    fun setLyricsAlignment(value: io.neta.music.ui.theme.LyricsAlignment) = model.setLyricsAlignment(value)
     fun setLyricsBackground(value: io.neta.music.data.LyricsBackgroundMode) = model.setLyricsBackground(value)
     fun setNotificationLyrics(value: Boolean) = model.setNotificationLyrics(value)
     fun setRhythmIntensity(value: io.neta.music.data.RhythmIntensity) = model.setRhythmIntensity(value)

@@ -444,7 +444,7 @@ internal fun MoreMenu(
         IconButton(onClick = { open = true }) { Icon(Icons.Filled.MoreVert, "更多", tint = MaterialTheme.colorScheme.onSurface) }
         DropdownMenu(open, onDismissRequest = { open = false }, shape = RoundedCornerShape(20.dp)) {
             DropdownMenuItem(text = { Text("全屏歌词") }, leadingIcon = { Icon(Icons.Filled.Lyrics, null) }, onClick = { open = false; onLyricsMode(true) })
-            DropdownMenuItem(text = { Text("歌词字号") }, leadingIcon = { Icon(Icons.Filled.TextFields, null) }, onClick = { open = false; lyricsSizeOpen = true })
+            DropdownMenuItem(text = { Text("歌词字号与对齐") }, leadingIcon = { Icon(Icons.Filled.TextFields, null) }, onClick = { open = false; lyricsSizeOpen = true })
             // 收起播放页，露出队列海报墙
             DropdownMenuItem(text = { Text("海报墙") }, leadingIcon = { Icon(Icons.Filled.GridView, null) }, onClick = { open = false; actions.openPosterWall() })
             DropdownMenuItem(text = { Text("选择音源") }, leadingIcon = { Icon(Icons.Filled.SwapHoriz, null) }, onClick = { open = false; onOpenSource() })

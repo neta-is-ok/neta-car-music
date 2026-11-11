@@ -680,7 +680,7 @@ internal class WideColumns(val left: Int, val block: Int, val coverMax: Int, val
 /**
  * 默认布局的横向分配，[dp] 是每 dp 的像素数。设计稿 1280dp 宽：左栏 560、歌词栏 x 600 宽 616、右边留 64 给右上角的更多按钮。
  * 左栏按宽度的 43.75% 取，限制在 340–560dp；封面不超过 320dp，并且离左栏两边各留 72dp：
- * 封面顶边和左上角的收起按钮在同一高度，窄窗口里不能压到按钮上。歌词栏最宽 760dp，再宽一行字太长。
+ * 封面顶边和左上角的收起按钮在同一高度，窄窗口里不能压到按钮上。歌词栏用满剩余宽度，大字号也不提前换行。
  *
  * [split] 是竖折痕（书本姿态、双竖）切出的左右两页，像素、本地坐标；横折痕不管。有竖折痕时左栏就是左页：
  * 右缘取折痕左缘（已让过 16dp 安全距离），歌词栏从右页起点再空 16dp，也就是离折痕 32dp；双屏的铰链本身有宽度，
@@ -696,7 +696,7 @@ internal fun wideColumns(width: Int, dp: Float, split: FoldSplit? = null): WideC
     val block = minOf(320 * dp, left - 48 * dp).roundToInt().coerceAtLeast(0)
     val coverMax = minOf(320 * dp, left - 144 * dp).roundToInt().coerceAtLeast(0)
     val lyricsX = if (book != null) (book.secondStart + 16 * dp).roundToInt() else (left + 40 * dp).roundToInt()
-    val lyricsWidth = (width - lyricsX - 64 * dp).coerceIn(0f, 760 * dp).roundToInt()
+    val lyricsWidth = (width - lyricsX - 64 * dp).coerceAtLeast(0f).roundToInt()
     return WideColumns(left, block, coverMax, lyricsX, lyricsWidth)
 }
 
@@ -781,6 +781,7 @@ internal class WideFocusFrame(
 /**
  * 设计稿 1280×800（状态栏下 772dp 高）：工具栏 x 32、宽 88；标题行 x 180、距顶 12；歌词宽 1000、高 610；
  * 进度条宽 980、底边留 40。工具栏的中心放在进度条以上区域 45% 的高度，窗口太矮放不下就等比缩小。
+ * 更宽的窗口里，歌词区一直延伸到右侧边距，标题行、动画舞台安全区和进度条跟随同一宽度。
  *
  * 有竖折痕（[split]，书本姿态、双竖）时专注歌词只占右页：标题行、歌词和进度条从右页起点再空 16dp 开始，
  * 右边留 32dp；竖向工具栏放在左页正中，左页只剩它，不再贴着窗口左边。
@@ -808,7 +809,7 @@ internal fun wideFocusFrame(
         contentX = (dockX + dockWidth + (width * 0.047f).coerceIn(32 * dp, 60 * dp)).roundToInt()
         right = (width * 0.078f).coerceIn(32 * dp, 100 * dp)
     }
-    val lyricsWidth = (width - contentX - right).coerceIn(0f, 1100 * dp).roundToInt()
+    val lyricsWidth = (width - contentX - right).coerceAtLeast(0f).roundToInt()
     val headerY = (12 * dp).roundToInt()
     val lyricsY = headerY + headerHeight + (22 * dp).roundToInt()
     val seekY = (height - seekHeight - (height * 0.052f).coerceIn(12 * dp, 40 * dp)).roundToInt()

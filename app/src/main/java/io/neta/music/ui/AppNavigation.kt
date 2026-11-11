@@ -61,10 +61,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
@@ -426,6 +429,17 @@ fun MyMusicApp(model: MusicViewModel) {
                 DisposableEffect(Unit) {
                     playerComposed.value = true
                     onDispose { playerComposed.value = false }
+                }
+                // 播放页是盖在主界面上的浮层，搜索页的输入框仍留在组合里：车机输入法会趁播放页
+                // 打开时的系统栏与边距变化为仍持有焦点的输入框重新弹出软键盘。进页就清掉下层
+                // 焦点并收起键盘，下一帧（进场动画改变边距后）再补一次收起兜底。
+                val keyboard = LocalSoftwareKeyboardController.current
+                val focus = LocalFocusManager.current
+                LaunchedEffect(Unit) {
+                    focus.clearFocus()
+                    keyboard?.hide()
+                    withFrameNanos { }
+                    keyboard?.hide()
                 }
                 CompositionLocalProvider(LocalCoverVisibilityScope provides this) {
                 PlayerTheme {

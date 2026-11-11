@@ -29,6 +29,7 @@ internal object SessionLyricsProtocol {
     // UTF-16 正文最多约 256 KiB，为同一 Binder 事务的其他字段留出空间；超限不截断歌词。
     private const val MAX_LRC_CHARACTERS = 128 * 1024
     private val timedLine = Regex("(?m)^\\s*\\[\\d{1,3}:\\d{1,2}(?:[.:]\\d{1,3})?]")
+    private val wordTimeTag = Regex("</?\\d{1,3}:\\d{1,2}(?:[.:]\\d{1,3})?>")
 
     fun publication(
         mediaId: String,
@@ -37,8 +38,10 @@ internal object SessionLyricsProtocol {
     ): SessionLyricsPublication {
         if (mediaId.isBlank()) return SessionLyricsPublication(mediaId, UNAVAILABLE)
         if (snapshot.mediaId != mediaId) return SessionLyricsPublication(mediaId, LOADING)
-        val raw = snapshot.lyrics?.trim()?.removePrefix("\uFEFF")
+        val rawLyrics = snapshot.lyrics?.trim()?.removePrefix("\uFEFF")
             ?: return SessionLyricsPublication(mediaId, LOADING, artist = snapshot.artist)
+        // 对外导出普通逐行 LRC；应用内部保留逐字时间，不能把 </mm:ss.SSS> 当正文发给外部播放器。
+        val raw = wordTimeTag.replace(rawLyrics, "")
         if (raw.length > MAX_LRC_CHARACTERS || !timedLine.containsMatchIn(raw)) {
             return SessionLyricsPublication(mediaId, UNAVAILABLE, artist = snapshot.artist)
         }

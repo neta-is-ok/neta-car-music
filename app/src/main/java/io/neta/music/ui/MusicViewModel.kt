@@ -3086,35 +3086,47 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         val autoNotice: String = "",
     )
 
+    /** [resolveForStart] 的结果：成功给 [resolution]；失败时它为 null，[failNotice] / [deepLink] 是要提示的原因和深链。 */
+    private data class StartOutcome(
+        val resolution: StartResolution? = null,
+        val failNotice: String = "",
+        val deepLink: String = "",
+    )
+
     /**
      * 把点中的这首解析到能直接起播：本机文件直接用文件地址，在线歌走取流与自动匹配换源。
-     * 放不了时把原因写进 playbackNotice（带深链）并返回 null。
+     * 放不了时不写状态，失败原因放在返回的 [StartOutcome] 里由调用方处置（可能还要接着试下一首）。
      */
-    private suspend fun resolveForStart(track: CanonicalTrack, pinnedProvider: String?): StartResolution? {
+    private suspend fun resolveForStart(track: CanonicalTrack, pinnedProvider: String?): StartOutcome {
         val local = localFileFor(track)
         if (local != null) {
-            return StartResolution(track, local.first, local.first.song.copy(url = local.second), fromLocal = true)
+            return StartOutcome(StartResolution(track, local.first, local.first.song.copy(url = local.second), fromLocal = true))
         }
         val result = resolvePlayable(track, pinnedProvider)
         val ready = result.resolution as? Resolution.Ready
         if (ready == null) {
-            base.value = base.value.copy(
-                playbackNotice = noSourceMessage(result.track, result.resolution),
+            return StartOutcome(
+                failNotice = noSourceMessage(result.track, result.resolution),
                 deepLink = (result.resolution as? Resolution.None)?.deepLink.orEmpty(),
             )
-            return null
         }
-        return StartResolution(
-            track = result.track,
-            source = ready.source,
-            song = ready.source.song.copy(url = ready.url),
-            preview = ready.isPreview,
-            autoMatched = result.autoMatched,
-            autoNotice = result.notice,
+        return StartOutcome(
+            StartResolution(
+                track = result.track,
+                source = ready.source,
+                song = ready.source.song.copy(url = ready.url),
+                preview = ready.isPreview,
+                autoMatched = result.autoMatched,
+                autoNotice = result.notice,
+            ),
         )
     }
 
-    /** 解析 [track] 并把整份队列装进播放器开播；装上了返回 true。 */
+    /**
+     * 解析 [track] 并把整份队列装进播放器开播；装上了返回 true。
+     * 点中的这首全平台都解析不出来、队列里还有别的歌时，往后找第一首能放的从它起播（提示已跳过哪些）；
+     * 整份队列都放不了只提示 [track] 的失败原因。
+     */
     private suspend fun startTrack(
         track: CanonicalTrack,
         queue: List<CanonicalTrack>,
@@ -3132,33 +3144,57 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         // 队列里已经有这首就照队列给的顺序放（newQueue 已把起点轮转过），从它的位置起播；不在就排到最前面
         val startIndex = queue.indexOfFirst { it.id == track.id }
         val ordered = if (startIndex < 0) (listOf(track) + queue).distinctBy { it.id } else queue.distinctBy { it.id }
-        val resolved = resolveForStart(track, pinnedProvider) ?: return false
+        // 点中的这首一首都解析不出来时别把整份队列作废（专辑第一首全平台无源，整个专辑就都放不出来了）：
+        // 照队列顺序往后找第一首能放的从它起播，提示跳过了哪些，和切歌途中 skipUnplayable 的做法一致。
+        // 换源（pinnedProvider 非空）点定的就是这一首，失败只提示原因，不悄悄改放别的歌。
+        var startAt = startIndex.coerceAtLeast(0)
+        var outcome = resolveForStart(ordered[startAt], pinnedProvider)
+        val clickedOutcome = outcome
+        val skippedTitles = mutableListOf<String>()
+        while (outcome.resolution == null && pinnedProvider == null &&
+            startAt < ordered.lastIndex && skippedTitles.size < minOf(ordered.size - 1, MAX_UNPLAYABLE_SKIPS)
+        ) {
+            skippedTitles += ordered[startAt].title
+            startAt++
+            currentCoroutineContext().ensureActive()
+            outcome = resolveForStart(ordered[startAt], pinnedProvider)
+        }
+        val resolved = outcome.resolution ?: run {
+            base.value = base.value.copy(playbackNotice = clickedOutcome.failNotice, deepLink = clickedOutcome.deepLink)
+            return false
+        }
         val playableTrack = resolved.track
         if (pinnedProvider != null) pinnedProviders[playableTrack.id] = pinnedProvider
         val source = resolved.source
         val resolvedSong = resolved.song
-        val canonicalQueue = ordered.map { if (it.id == track.id) playableTrack else it }
+        val canonicalQueue = ordered.map { if (it.id == playableTrack.id) playableTrack else it }
         val queueSongs = canonicalQueue.map { item ->
             if (item.id == playableTrack.id) resolvedSong else preferredSong(item)
         }
+        // 跳过的歌用点中那首的失败原因说明（用户点的是它，不是最后试的那首），再带上起播这首自己的回退说明
+        val skippedNotice = if (skippedTitles.isEmpty()) "" else {
+            "已跳过${skippedTitles.joinToString("、") { "《$it》" }}：${clickedOutcome.failNotice}"
+        }
         val fallbackNotice = when {
-            resolved.fromLocal -> ""
-            resolved.preview -> "当前为试听片段"
-            resolved.autoMatched -> resolved.autoNotice.ifBlank { "原音源不可用，已自动匹配到${source.providerName}" }
+            resolved.fromLocal -> skippedNotice
+            resolved.preview -> listOf(skippedNotice, "当前为试听片段").filter { it.isNotBlank() }.joinToString("，")
+            resolved.autoMatched -> listOf(skippedNotice, resolved.autoNotice.ifBlank { "原音源不可用，已自动匹配到${source.providerName}" })
+                .filter { it.isNotBlank() }.joinToString("，")
             pinnedProvider != null && source.providerId != pinnedProvider ->
                 "所选平台没有返回可播放地址，已切换到${source.providerName}"
-            else -> ""
+            else -> skippedNotice
         }
         currentCoroutineContext().ensureActive()
         dormant = null
         AppLog.d(
             "Player",
             "起播《${resolvedSong.title}》${source.providerName}${if (resolved.fromLocal) "（本机文件）" else ""}" +
-                "，队列 ${queueSongs.size} 首，从第 ${startIndex.coerceAtLeast(0) + 1} 首",
+                "，队列 ${queueSongs.size} 首，从第 ${startAt + 1} 首" +
+                if (skippedTitles.isEmpty()) "" else "（跳过 ${skippedTitles.joinToString("、") { "《$it》" }}）",
         )
         player.setMediaItems(queueSongs.mapIndexed { index, song ->
-            mediaItem(song, if (index == startIndex.coerceAtLeast(0)) playRequestId else "")
-        }, startIndex.coerceAtLeast(0), 0)
+            mediaItem(song, if (index == startAt) playRequestId else "")
+        }, startAt, 0)
         player.prepare()
         player.play()
         val requestId = base.value.queueId + 1
@@ -5235,7 +5271,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             player.play()
             return true
         }
-        val resolved = resolveForStart(track, pinnedProvider) ?: return false
+        // 点歌插播点定就是这一首：放不了只提示原因，不插别的歌
+        val outcome = resolveForStart(track, pinnedProvider)
+        val resolved = outcome.resolution ?: run {
+            base.value = base.value.copy(playbackNotice = outcome.failNotice, deepLink = outcome.deepLink)
+            return false
+        }
         if (pinnedProvider != null) pinnedProviders[resolved.track.id] = pinnedProvider
         // 解析期间 base 可能被别处更新，装进队列前重新读一次
         val fresh = base.value

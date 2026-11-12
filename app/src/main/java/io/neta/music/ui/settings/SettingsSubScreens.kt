@@ -234,7 +234,7 @@ fun AppearanceSettingsScreen(
             )
         }
         item(key = "lyricsAlignNote", contentType = "note") {
-            SettingsNote("只调整播放页歌词列表的排布；全屏歌词动画和海报墙保持各自的排版。")
+            SettingsNote("作用于播放页歌词列表和全屏歌词动画；星潮·银河、巨幕、跳一跳的场景排版和海报墙保持各自的排布。")
         }
         item(key = "layoutHead", contentType = "sectionHeader") { SectionLabel("布局模式") }
         item(key = "layout", contentType = "layoutOptions") {

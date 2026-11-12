@@ -22,6 +22,7 @@ import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
@@ -36,6 +37,8 @@ import io.neta.music.ui.player.stage.charTimings
 import io.neta.music.ui.player.stage.fitText
 import io.neta.music.ui.player.stage.formatInt
 import io.neta.music.ui.player.stage.formatSeconds
+import io.neta.music.ui.player.stage.lyricBlockLeft
+import io.neta.music.ui.theme.LyricsAlignment
 import kotlin.math.min
 import kotlin.math.roundToInt
 
@@ -96,7 +99,9 @@ object MisideDropVisualizer : LyricVisualizer {
                 val unit = ctx.display.textSp.sp.toPx() / MISIDE_BASE_FONT
                 val style = misideStyle(ctx.display.textSp * cfg.fontSize / MISIDE_BASE_FONT)
                 val groundY = safe.top + safe.height * MISIDE_GROUND_RATIO
-                val line = ctx.currentLine?.takeIf { it.text.isNotBlank() }?.let { layoutMisideLine(measurer, it, style, safe) }
+                val align = ctx.display.alignment
+                val rtl = layoutDirection == LayoutDirection.Rtl
+                val line = ctx.currentLine?.takeIf { it.text.isNotBlank() }?.let { layoutMisideLine(measurer, it, style, safe, align, rtl) }
                 val ink = MisideInk(ctx.colors.text, unit, cfg.glowBoost)
                 val groundLeft = safe.left + safe.width * GROUND_INSET
                 val groundRight = safe.right - safe.width * GROUND_INSET
@@ -113,7 +118,7 @@ object MisideDropVisualizer : LyricVisualizer {
                 val groundAt = Offset(groundLeft, groundY)
 
                 if (ctx.display.reduceMotion) {
-                    val rows = misideStaticRows(ctx, measurer, style, safe, cfg, unit, groundY, size.height)
+                    val rows = misideStaticRows(ctx, measurer, style, safe, cfg, unit, groundY, size.height, align, rtl)
                     onDrawBehind {
                         drawRect(groundBrush, groundAt, groundSize, alpha = 0.5f)
                         for (row in rows) for (p in row.particles) drawParticle(p, ink, state, row.alpha)
@@ -233,13 +238,21 @@ private fun DrawScope.drawParticle(p: MisideParticle<MisideGlyph>, ink: MisideIn
 }
 
 /**
- * 整句排在安全区中央（最宽 84%，最多 3 行，放不下缩字号），取每个字的字框；空白不出粒子。
+ * 整句排在安全区中央一带（最宽 84%，最多 3 行，放不下缩字号），按 [align] 放进带里，取每个字的字框；空白不出粒子。
  * 没有逐字时间时按句长均分（原模组按整行均分，不留尾巴）。
  */
-private fun layoutMisideLine(measurer: TextMeasurer, line: StageLine, style: TextStyle, safe: Rect): MisideLine<MisideGlyph> {
-    val layout = fitText(measurer, line.text, style, (safe.width * LINE_MAX_WIDTH).toInt(), maxLines = 3)
+private fun layoutMisideLine(
+    measurer: TextMeasurer,
+    line: StageLine,
+    style: TextStyle,
+    safe: Rect,
+    align: LyricsAlignment,
+    rtl: Boolean,
+): MisideLine<MisideGlyph> {
+    val layout = fitText(measurer, line.text, style, (safe.width * LINE_MAX_WIDTH).toInt(), maxLines = 3, align = align.align)
     val fitted = layout.layoutInput.style.copy(textAlign = TextAlign.Unspecified)
-    val left = safe.center.x - layout.size.width / 2f
+    val inset = safe.width * (1f - LINE_MAX_WIDTH) / 2f
+    val left = lyricBlockLeft(align, Rect(safe.left + inset, safe.top, safe.right - inset, safe.bottom), layout.size.width.toFloat(), rtl)
     val top = safe.center.y - layout.size.height / 2f
     val chars = ArrayList<MisideChar<MisideGlyph>>()
     var offset = 0
@@ -270,6 +283,8 @@ private fun misideStaticRows(
     unit: Float,
     groundY: Float,
     stageHeight: Float,
+    align: LyricsAlignment,
+    rtl: Boolean,
 ): List<MisideStaticRow> {
     val count = min(cfg.keepRows, STATIC_ROWS)
     if (count <= 0 || ctx.lines.isEmpty()) return emptyList()
@@ -278,7 +293,7 @@ private fun misideStaticRows(
     val rows = ArrayList<MisideStaticRow>(count)
     for (k in count - 1 downTo 0) {
         val source = ctx.lines.getOrNull(newest - k)?.takeIf { it.text.isNotBlank() } ?: continue
-        val line = layoutMisideLine(measurer, source, style, safe)
+        val line = layoutMisideLine(measurer, source, style, safe, align, rtl)
         val field = MisideField<MisideGlyph>()
         val random = StageRandom(ctx.seed xor (source.index.toLong() * STATIC_SEED_MIX))
         line.chars.forEachIndexed { n, c ->

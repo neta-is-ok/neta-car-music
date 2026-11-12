@@ -63,7 +63,7 @@ internal fun LyricsSizeSheet(actions: MusicActions, onDismiss: () -> Unit) {
                 count = 1,
             )
             Text(
-                "选择字号会单独调整歌词，不改变其他界面文字；对齐只作用于播放页歌词列表。",
+                "选择字号会单独调整歌词，不改变其他界面文字；对齐作用于播放页歌词列表和全屏歌词动画（星潮·银河、巨幕、跳一跳除外）。",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

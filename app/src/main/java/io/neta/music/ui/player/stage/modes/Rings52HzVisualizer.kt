@@ -26,6 +26,7 @@ import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.sp
 import io.neta.music.ui.player.stage.LyricSetting
 import io.neta.music.ui.player.stage.LyricStageContext
@@ -36,6 +37,7 @@ import io.neta.music.ui.player.stage.StageLine
 import io.neta.music.ui.player.stage.charTimings
 import io.neta.music.ui.player.stage.formatPercent
 import io.neta.music.ui.player.stage.formatTimes
+import io.neta.music.ui.theme.LyricsAlignment
 import kotlin.math.abs
 import kotlin.math.floor
 import kotlin.math.hypot
@@ -90,7 +92,7 @@ object Rings52HzVisualizer : LyricVisualizer {
         Spacer(
             modifier.drawWithCache {
                 val safe = ctx.display.safeRect(size)
-                stage.prepare(this, measurer, ctx, ctx.currentLine, safe, size, ctx.settings.number("fontScale"))
+                stage.prepare(this, measurer, ctx, ctx.currentLine, safe, size, ctx.settings.number("fontScale"), layoutDirection == LayoutDirection.Rtl)
                 onDrawBehind { stage.draw(this, ctx, shader, safe) }
             },
         )
@@ -126,7 +128,16 @@ private class RingsStage {
     private val pathPiece = Path()
     private val outlineBuffer = FloatArray(OFFSET_DIRECTIONS * 2)
 
-    fun prepare(density: Density, measurer: TextMeasurer, ctx: LyricStageContext, line: StageLine?, safe: Rect, size: Size, fontScale: Float) {
+    fun prepare(
+        density: Density,
+        measurer: TextMeasurer,
+        ctx: LyricStageContext,
+        line: StageLine?,
+        safe: Rect,
+        size: Size,
+        fontScale: Float,
+        rtl: Boolean,
+    ) {
         if (size != stageSize) {
             // 尺寸变了：形状全部作废，记录从头来
             stageSize = size
@@ -136,10 +147,12 @@ private class RingsStage {
             fading = null
         }
         val baseSize = with(density) { (ctx.display.textSp * fontScale).sp.toPx() }
-        val geometry = listOf(safe, baseSize)
+        // 对齐进了 geometry：换了“歌词对齐”同一句也重排
+        val alignment = ctx.display.alignment
+        val geometry = listOf(safe, baseSize, alignment, rtl)
         val shown = current
         if (shown != null && shown.index == line?.index && shown.geometry == geometry) return
-        val next = line?.takeIf { it.text.isNotBlank() }?.let { buildLine(density, measurer, it, safe, baseSize, geometry) }
+        val next = line?.takeIf { it.text.isNotBlank() }?.let { buildLine(density, measurer, it, safe, baseSize, geometry, alignment, rtl) }
         if (shown != null && next != null && shown.index == next.index) {
             // 同一句换了字号或安全区：字形跟着变，旧形状的年轮作废
             next.appearAt = shown.appearAt
@@ -151,9 +164,19 @@ private class RingsStage {
         current = next
     }
 
-    private fun buildLine(density: Density, measurer: TextMeasurer, line: StageLine, safe: Rect, baseSize: Float, geometry: Any): RingsShownLine {
+    private fun buildLine(
+        density: Density,
+        measurer: TextMeasurer,
+        line: StageLine,
+        safe: Rect,
+        baseSize: Float,
+        geometry: Any,
+        alignment: LyricsAlignment,
+        rtl: Boolean,
+    ): RingsShownLine {
         val baseStyle = TextStyle(fontSize = with(density) { baseSize.toSp() }, fontWeight = FontWeight.Medium)
         val advances = HashMap<String, Float>()
+        // 排版带：安全区左右各留 10%（原来的 80% 居中带），行在带里按“歌词对齐”排
         val layout = layoutRingsLine(
             line.text,
             advanceAtBase = { char ->
@@ -163,9 +186,11 @@ private class RingsStage {
                 }
             },
             baseSize = baseSize,
-            centerX = safe.center.x,
             centerY = safe.center.y,
-            maxWidth = safe.width * 0.8f,
+            bandLeft = safe.left + safe.width * 0.1f,
+            bandRight = safe.right - safe.width * 0.1f,
+            alignment = alignment,
+            rtl = rtl,
         )
         val style = baseStyle.copy(fontSize = with(density) { layout.size.toSp() })
         val measured = HashMap<String, TextLayoutResult>()

@@ -34,6 +34,7 @@ import io.neta.music.ui.player.stage.LyricVisualizer
 import io.neta.music.ui.player.stage.ModOrigin
 import io.neta.music.ui.player.stage.SettingValues
 import io.neta.music.ui.player.stage.StageDevice
+import io.neta.music.ui.theme.LyricsAlignment
 
 /**
  * Rush：封面取色铺满整页，左对齐的粗体大字，当前句停在安全区上三分之一处，前后的句子缩到 80% 并按距离模糊，
@@ -60,7 +61,7 @@ object RushVisualizer : LyricVisualizer {
 
     @Composable
     override fun Background(ctx: LyricStageContext, modifier: Modifier) {
-        val look = remember(ctx.settings) { rushLook(ctx.settings) }
+        val look = remember(ctx.settings, ctx.display.alignment) { rushLook(ctx.settings, ctx.display.alignment) }
         val palette = remember(ctx.colors, look.colors) { rushPalette(ctx.colors, look.colors) }
         val spec = colorSpec(ctx)
         val colors = RushBackgroundColors(
@@ -74,7 +75,7 @@ object RushVisualizer : LyricVisualizer {
 
     @Composable
     override fun Stage(ctx: LyricStageContext, modifier: Modifier) {
-        val look = remember(ctx.settings) { rushLook(ctx.settings) }
+        val look = remember(ctx.settings, ctx.display.alignment) { rushLook(ctx.settings, ctx.display.alignment) }
         val palette = remember(ctx.colors, look.colors) { rushPalette(ctx.colors, look.colors) }
         val content: State<Color> = animateColorAsState(palette.content, colorSpec(ctx), label = "rushContent")
         RushLyricList(ctx, look, content, modifier)
@@ -86,15 +87,20 @@ object RushVisualizer : LyricVisualizer {
         if (ctx.display.reduceMotion) snap() else MaterialTheme.motionScheme.defaultEffectsSpec()
 }
 
-/** 读当前设置。 */
-internal fun rushLook(settings: SettingValues): RushLook = RushLook(
+/** 读当前设置；对齐选“跟随设置”时用播放页的 [global]（[LyricsAlignment]）。 */
+internal fun rushLook(settings: SettingValues, global: LyricsAlignment): RushLook = RushLook(
     background = settings.choice(RUSH_KEY_BACKGROUND),
     rhythm = settings.choice(RUSH_KEY_RHYTHM),
     colors = settings.choice(RUSH_KEY_COLORS),
     align = when (settings.choice(RUSH_KEY_ALIGN)) {
         RUSH_ALIGN_CENTER -> RushAlign.Center
         RUSH_ALIGN_END -> RushAlign.End
-        else -> RushAlign.Start
+        // 默认“跟随设置”：没在面板里显式选过左 / 中 / 右时跟着全局歌词对齐走
+        else -> when (global) {
+            LyricsAlignment.Start -> RushAlign.Start
+            LyricsAlignment.Center -> RushAlign.Center
+            LyricsAlignment.End -> RushAlign.End
+        }
     },
     size = settings.number(RUSH_KEY_SIZE),
     blur = settings.toggle(RUSH_KEY_BLUR),
@@ -124,8 +130,9 @@ private fun rushSettings(blurDefault: Boolean): List<LyricSetting> = listOf(
     LyricSetting.Choice(
         RUSH_KEY_ALIGN,
         "对齐",
-        listOf(RUSH_ALIGN_START to "左", RUSH_ALIGN_CENTER to "中", RUSH_ALIGN_END to "右"),
-        RUSH_ALIGN_START,
+        listOf(RUSH_ALIGN_FOLLOW to "跟随设置", RUSH_ALIGN_START to "左", RUSH_ALIGN_CENTER to "中", RUSH_ALIGN_END to "右"),
+        RUSH_ALIGN_FOLLOW,
+        summary = "“跟随设置”用播放页的“歌词对齐”",
     ),
     LyricSetting.Number(RUSH_KEY_SIZE, "字号", 0.8f, 1.4f, 0.1f, 1f),
     LyricSetting.Toggle(RUSH_KEY_BLUR, "景深模糊", blurDefault, summary = "离当前句越远越模糊，拖动歌词时取消；Android 12 起"),
@@ -142,6 +149,7 @@ internal const val RUSH_KEY_ALIGN = "align"
 internal const val RUSH_KEY_SIZE = "size"
 internal const val RUSH_KEY_BLUR = "blur"
 internal const val RUSH_KEY_EXPRESSIVE = "expressive"
+private const val RUSH_ALIGN_FOLLOW = "follow"
 private const val RUSH_ALIGN_START = "start"
 private const val RUSH_ALIGN_CENTER = "center"
 private const val RUSH_ALIGN_END = "end"

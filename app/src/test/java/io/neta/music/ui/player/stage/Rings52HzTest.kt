@@ -31,6 +31,7 @@ import io.neta.music.ui.player.stage.modes.ringsFillerGap
 import io.neta.music.ui.player.stage.modes.ringsLightProgress
 import io.neta.music.ui.player.stage.modes.ringsMinGap
 import io.neta.music.ui.player.stage.modes.ringsSwell
+import io.neta.music.ui.theme.LyricsAlignment
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -50,7 +51,7 @@ class Rings52HzTest {
     }
 
     private fun layout(text: String, maxWidth: Float = 800f) =
-        layoutRingsLine(text, advance(60f), 60f, 500f, 400f, maxWidth)
+        layoutRingsLine(text, advance(60f), 60f, 400f, 500f - maxWidth / 2, 500f + maxWidth / 2, LyricsAlignment.Center, rtl = false)
 
     @Test
     fun wideCharsFollowTheOriginalRanges() {

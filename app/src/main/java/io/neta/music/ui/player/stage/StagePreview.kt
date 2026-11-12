@@ -25,7 +25,6 @@ import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -33,6 +32,8 @@ import io.neta.music.data.LyricStagePrefs
 import io.neta.music.data.Song
 import io.neta.music.ui.player.blobColorCache
 import io.neta.music.ui.player.coverBlobColors
+import io.neta.music.ui.theme.LocalAppearance
+import io.neta.music.ui.theme.LyricsAlignment
 
 /**
  * 动画面板里的缩略图：用模式自己的 [LyricVisualizer.Stage] 按“减少动态效果”画一张静帧（没有帧循环、不开律动），
@@ -43,6 +44,7 @@ import io.neta.music.ui.player.coverBlobColors
 internal fun StagePreview(mode: LyricVisualizer, song: Song?, prefs: LyricStagePrefs, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val scheme = MaterialTheme.colorScheme
+    val alignment = LocalAppearance.current.lyricsAlignment
     val cover = song?.cover.orEmpty()
     val coverColors by produceState(blobColorCache.get(cover), cover) { value = coverBlobColors(context, cover) }
     val colors = remember(scheme.onSurface, scheme.primary, scheme.secondary, scheme.tertiary, scheme.primaryContainer, scheme.surface, coverColors) {
@@ -57,12 +59,12 @@ internal fun StagePreview(mode: LyricVisualizer, song: Song?, prefs: LyricStageP
         val textSp = (maxWidth.value / CARD_DP_PER_TEXT_SP).coerceIn(MIN_PREVIEW_TEXT_SP, PREVIEW_TEXT_SP)
         if (mode.id == ClassicVisualizer.id) {
             PreviewBackdrop(colors)
-            ClassicPreview(textSp / PREVIEW_TEXT_SP)
+            ClassicPreview(textSp / PREVIEW_TEXT_SP, alignment)
             return@BoxWithConstraints
         }
         val insets = remember { StageInsets() }
         val raw = prefs.pluginSettings[mode.id].orEmpty()
-        val ctx = remember(mode, song, colors, raw, prefs.subline, textSp) {
+        val ctx = remember(mode, song, colors, raw, prefs.subline, textSp, alignment) {
             // 能拖动的列表类模式（Rush）在缩略图里看得到上下句，多给一句“上一句”；其它模式的缩略图照旧只有两句
             val lines = if (mode.interactive) SAMPLE_LIST_LINES else SAMPLE_LINES
             val current = if (mode.interactive) 1 else 0
@@ -75,7 +77,7 @@ internal fun StagePreview(mode: LyricVisualizer, song: Song?, prefs: LyricStageP
                 lineIndex = mutableIntStateOf(current),
                 paused = mutableStateOf(false),
                 colors = colors,
-                display = StageDisplay(textSp, reduceMotion = true, tv = false, wide = true, insets = insets),
+                display = StageDisplay(textSp, reduceMotion = true, tv = false, wide = true, insets = insets, alignment = alignment),
                 settings = SettingValues(mode.settings, raw),
                 audio = null,
                 subline = prefs.subline,
@@ -125,13 +127,18 @@ private fun PreviewBackdrop(colors: StageColors) {
     )
 }
 
-/** 经典：上一句、当前句（放大、亮）、下一句。 */
+/** 经典：上一句、当前句（放大、亮）、下一句，按“歌词对齐”排。 */
 @Composable
-private fun ClassicPreview(scale: Float) {
+private fun ClassicPreview(scale: Float, alignment: LyricsAlignment) {
     val on = MaterialTheme.colorScheme.onSurface
     Column(
         Modifier.fillMaxSize().padding(horizontal = 10.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically),
+        horizontalAlignment = when (alignment) {
+            LyricsAlignment.Start -> Alignment.Start
+            LyricsAlignment.Center -> Alignment.CenterHorizontally
+            LyricsAlignment.End -> Alignment.End
+        },
     ) {
         Text(SAMPLE_PREVIOUS, color = on.copy(alpha = 0.45f), fontSize = 10.sp * scale, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Text(
@@ -141,7 +148,7 @@ private fun ClassicPreview(scale: Float) {
             lineHeight = 18.sp * scale,
             fontWeight = FontWeight.Bold,
             maxLines = 2,
-            textAlign = TextAlign.Start,
+            textAlign = alignment.align,
         )
         Text(SAMPLE_LINES[1].text, color = on.copy(alpha = 0.45f), fontSize = 10.sp * scale, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }

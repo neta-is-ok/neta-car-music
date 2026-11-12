@@ -219,7 +219,7 @@ internal fun RushLyricList(ctx: LyricStageContext, look: RushLook, content: Stat
         state = list,
         modifier = modifier
             .fillMaxSize()
-            .rushSafeArea(display, padding)
+            .rushSafeArea(display, look.align, rtl, padding)
             .rushEdgeFade(),
         contentPadding = padding,
         verticalArrangement = Arrangement.spacedBy(spacing),
@@ -362,17 +362,26 @@ private class RushAnchorPadding : PaddingValues {
     override fun calculateRightPadding(layoutDirection: LayoutDirection): Dp = 0.dp
 }
 
-/** 列表放进安全区：安全区在测量阶段才知道，这里只在布局阶段读；宽度最多 720dp，靠起始边。 */
-private fun Modifier.rushSafeArea(display: StageDisplay, padding: RushAnchorPadding): Modifier = layout { measurable, constraints ->
-    val width = constraints.maxWidth
-    val height = constraints.maxHeight
-    val rect = display.safeRect(Size(width.toFloat(), height.toFloat()))
-    val listWidth = min(rect.width, RUSH_MAX_WIDTH.toPx()).roundToInt().coerceAtLeast(0)
-    val listHeight = rect.height.roundToInt().coerceAtLeast(0)
-    padding.height = listHeight.toDp()
-    val placeable = measurable.measure(Constraints.fixed(listWidth, listHeight))
-    layout(width, height) { placeable.placeRelative(rect.left.roundToInt(), rect.top.roundToInt()) }
-}
+/** 列表放进安全区：安全区在测量阶段才知道，这里只在布局阶段读；宽度最多 720dp，按对齐放。 */
+private fun Modifier.rushSafeArea(display: StageDisplay, align: RushAlign, rtl: Boolean, padding: RushAnchorPadding): Modifier =
+    layout { measurable, constraints ->
+        val width = constraints.maxWidth
+        val height = constraints.maxHeight
+        val rect = display.safeRect(Size(width.toFloat(), height.toFloat()))
+        val listWidth = min(rect.width, RUSH_MAX_WIDTH.toPx()).roundToInt().coerceAtLeast(0)
+        val listHeight = rect.height.roundToInt().coerceAtLeast(0)
+        padding.height = listHeight.toDp()
+        val placeable = measurable.measure(Constraints.fixed(listWidth, listHeight))
+        layout(width, height) {
+            // 列表比安全区窄时（最多 720dp，平板 / 车机），整列按对齐放：原来固定贴起始边
+            val left = if (listWidth >= rect.width) rect.left else when (align) {
+                RushAlign.Start -> if (rtl) rect.right - listWidth else rect.left
+                RushAlign.Center -> rect.left + (rect.width - listWidth) / 2f
+                RushAlign.End -> if (rtl) rect.left else rect.right - listWidth
+            }
+            placeable.place(left.roundToInt(), rect.top.roundToInt())
+        }
+    }
 
 /** 上下两端渐隐（上 44dp、下 60dp，矮的时候按高度收），离屏合成一次再用 DstIn 擦。 */
 private fun Modifier.rushEdgeFade(): Modifier = this

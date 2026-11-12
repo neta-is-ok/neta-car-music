@@ -4,6 +4,7 @@ import androidx.compose.ui.geometry.Rect
 import io.neta.music.ui.player.stage.StageRandom
 import io.neta.music.ui.player.stage.splitCodePoints
 import io.neta.music.ui.player.stage.stableHash
+import io.neta.music.ui.theme.LyricsAlignment
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
@@ -100,18 +101,21 @@ private fun wrap(tokens: List<List<RingsEntry>>, maxWidth: Float): List<List<Rin
 }
 
 /**
- * 整句排版（照 layoutLine）：行宽 [maxWidth]，最多 3 行，放不下字号乘 0.88 重排（最多 6 次）；各行居中，行距 1.34 倍字号，
- * 整块以 ([centerX], [centerY]) 居中。种子取歌词文本的 FNV-1a 哈希，同一句每次一样：
- * 宽字逐个错位、旋转、缩放，相邻的宽字多留 0.06 倍字号；拉丁字母按整词错位，字母只带两成的抖动，保证词还能读。
+ * 整句排版（照 layoutLine）：行宽为带 [bandLeft]..[bandRight]，最多 3 行，放不下字号乘 0.88 重排（最多 6 次）；
+ * 各行按 [alignment] 在带里排（Start / End 贴带边、[rtl] 时互换，Center 居中），行距 1.34 倍字号，整块以 [centerY] 居中。
+ * 种子取歌词文本的 FNV-1a 哈希，同一句每次一样：宽字逐个错位、旋转、缩放，相邻的宽字多留 0.06 倍字号；
+ * 拉丁字母按整词错位，字母只带两成的抖动，保证词还能读。
  * [advanceAtBase] 是每个字在 [baseSize] 字号下的步进宽度，换字号时按比例缩放（不重新测量）。
  */
 internal fun layoutRingsLine(
     text: String,
     advanceAtBase: (String) -> Float,
     baseSize: Float,
-    centerX: Float,
     centerY: Float,
-    maxWidth: Float,
+    bandLeft: Float,
+    bandRight: Float,
+    alignment: LyricsAlignment,
+    rtl: Boolean,
 ): RingsLineLayout {
     val chars = splitCodePoints(text)
     val baseWidths = FloatArray(chars.size) { advanceAtBase(chars[it]) }
@@ -119,7 +123,7 @@ internal fun layoutRingsLine(
     var rows: List<List<RingsEntry>> = emptyList()
     for (attempt in 0 until FIT_ATTEMPTS) {
         val k = size / baseSize
-        rows = wrap(tokenize(chars.mapIndexed { i, c -> RingsEntry(c, i, baseWidths[i] * k) }), maxWidth)
+        rows = wrap(tokenize(chars.mapIndexed { i, c -> RingsEntry(c, i, baseWidths[i] * k) }), bandRight - bandLeft)
         if (rows.size <= MAX_ROWS) break
         size *= FIT_SHRINK
     }
@@ -137,7 +141,14 @@ internal fun layoutRingsLine(
             val gap = if (i + 1 < list.size) size * (if (wide[i] || wide[i + 1]) 0.06f else 0.02f) else 0f
             list[i].width + gap
         }
-        var cursor = centerX - advance.sum() / 2f + between(-0.04f, 0.04f) * size
+        // 行锚点跟着“歌词对齐”走：行宽各不相同，Start / End 下自然形成左 / 右对齐
+        val rowWidth = advance.sum()
+        val rowLeft = when (alignment) {
+            LyricsAlignment.Start -> if (rtl) bandRight - rowWidth else bandLeft
+            LyricsAlignment.Center -> (bandLeft + bandRight - rowWidth) / 2f
+            LyricsAlignment.End -> if (rtl) bandLeft else bandRight - rowWidth
+        }
+        var cursor = rowLeft + between(-0.04f, 0.04f) * size
         val rowY = top + step * rowIndex
         var word: FloatArray? = null
         list.forEachIndexed { i, entry ->

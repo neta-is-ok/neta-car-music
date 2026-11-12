@@ -184,7 +184,8 @@ private fun StageHost(
 ) {
     val context = LocalContext.current
     val window = LocalAppWindow.current
-    val reduceMotion = LocalAppearance.current.reduceMotion || rememberSystemAnimationsOff()
+    val appearance = LocalAppearance.current
+    val reduceMotion = appearance.reduceMotion || rememberSystemAnimationsOff()
     val tv = window.isTv
     // 等歌词时不给句子：模式画空场，不会把上一首的词再演一遍
     val lines = remember(lyrics, waiting) { if (waiting) emptyList() else stageLines(lyrics) }
@@ -208,7 +209,7 @@ private fun StageHost(
     // 频谱卡片开着时安全区底部让出卡片那一截（卡片本身按原来的安全区摆）
     val reserve = if (prefs.spectrum && audio != null) with(LocalDensity.current) { SpectrumReserve.toPx() } else 0f
     val touch = mode.interactive && !tv
-    val display = remember(textSp, reduceMotion, tv, window.widthDp, window.heightDp, insets, reserve, touch) {
+    val display = remember(textSp, reduceMotion, tv, window.widthDp, window.heightDp, insets, reserve, touch, appearance.lyricsAlignment) {
         StageDisplay(
             textSp,
             reduceMotion,
@@ -217,6 +218,7 @@ private fun StageHost(
             insets = insets,
             reserveBottom = reserve,
             touch = touch,
+            alignment = appearance.lyricsAlignment,
         )
     }
     val seekState = rememberUpdatedState(seek)

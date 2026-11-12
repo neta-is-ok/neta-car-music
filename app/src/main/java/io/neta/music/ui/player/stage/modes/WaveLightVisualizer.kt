@@ -36,9 +36,11 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import io.neta.music.ui.player.stage.LyricSetting
@@ -47,6 +49,8 @@ import io.neta.music.ui.player.stage.LyricVisualizer
 import io.neta.music.ui.player.stage.ModOrigin
 import io.neta.music.ui.player.stage.StageLine
 import io.neta.music.ui.player.stage.fitText
+import io.neta.music.ui.player.stage.lyricBlockLeft
+import io.neta.music.ui.theme.LyricsAlignment
 import java.text.BreakIterator
 import kotlin.math.abs
 import kotlin.math.ceil
@@ -173,7 +177,8 @@ private data class WaveContent(val text: String, val subtitle: String, val keywo
 private fun WaveLine(ctx: LyricStageContext, palette: WavePalette, content: WaveContent, measurer: TextMeasurer, family: FontFamily?) {
     val tokens = remember(content.text) { waveTokens(content.text) }
     val entrance = remember { WaveVinylKit.Entrance(waveEntranceMs(tokens)) }
-    val scene = remember(ctx, palette, measurer, family) { WaveScene(ctx, palette, content, tokens, measurer, family) }
+    val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+    val scene = remember(ctx, palette, measurer, family, rtl) { WaveScene(ctx, palette, content, tokens, measurer, family, rtl) }
     Box(Modifier.fillMaxSize()) {
         if (content.keyword.isNotEmpty()) {
             ScenePart(scene, WaveScene.KEYWORD, layer = {
@@ -240,11 +245,13 @@ private class WaveScene(
     private val tokens: List<WaveToken>,
     private val measurer: TextMeasurer,
     private val family: FontFamily?,
+    private val rtl: Boolean,
 ) {
     private val textScale = ctx.settings.number("textScale")
     private var measuredWidth = -1
     private var measuredHeight = -1
     private var measuredSafe = Rect.Zero
+    private var measuredAlign: LyricsAlignment? = null
 
     private val tokenBoxes = Array(tokens.size) { IntRect.Zero }
     private val tokenPieces = arrayOfNulls<List<WavePiece>>(tokens.size)
@@ -279,17 +286,19 @@ private class WaveScene(
     fun measure(density: Density, width: Int, height: Int) {
         // 读安全区就订阅了它：顶栏、控件高度变了会重新测量
         val safe = ctx.display.safeRect(Size(width.toFloat(), height.toFloat()))
-        if (width == measuredWidth && height == measuredHeight && safe == measuredSafe) return
+        val align = ctx.display.alignment
+        if (width == measuredWidth && height == measuredHeight && safe == measuredSafe && align == measuredAlign) return
         measuredWidth = width
         measuredHeight = height
         measuredSafe = safe
-        with(density) { layoutAll(safe) }
+        measuredAlign = align
+        with(density) { layoutAll(safe, align) }
     }
 
-    private fun Density.layoutAll(safe: Rect) {
+    private fun Density.layoutAll(safe: Rect, align: LyricsAlignment) {
         val css = density
         val baseSp = ctx.display.textSp * LINE_SCALE * textScale
-        // 正文：居中、左右各留 7%，最多 3 行，按 text-wrap: balance 均衡换行
+        // 正文：左右各留 7%，最多 3 行，按 text-wrap: balance 均衡换行，按“歌词对齐”放进带里
         val lineStyle = TextStyle(
             fontFamily = family,
             fontSize = baseSp.sp,
@@ -297,11 +306,12 @@ private class WaveScene(
             lineHeight = 1.3.em,
             lineBreak = LineBreak.Heading,
         )
-        val line = fitText(measurer, content.text, lineStyle, (safe.width * 0.86f).toInt(), maxLines = 3)
+        val line = fitText(measurer, content.text, lineStyle, (safe.width * 0.86f).toInt(), maxLines = 3, align = align.align)
         val fitted = line.layoutInput.style
         em = fitted.fontSize.toPx()
-        // 短句的排版宽度就是字宽，长句是最大宽度；都按自己的宽度居中
-        val lineLeft = safe.center.x - line.size.width / 2f
+        // 短句的排版宽度就是字宽，长句是最大宽度；都按“歌词对齐”放进左右各留 7% 的带里
+        val band = Rect(safe.left + safe.width * 0.07f, safe.top, safe.right - safe.width * 0.07f, safe.bottom)
+        val lineLeft = lyricBlockLeft(align, band, line.size.width.toFloat(), rtl)
         val lineTop = safe.center.y - line.size.height / 2f
         val lineBottom = lineTop + line.size.height
         val lineShadowSigma = max(10f * css, safe.height * 0.03f) / 2f
@@ -349,13 +359,14 @@ private class WaveScene(
             keywordShadow = Shadow(palette.keyword.copy(alpha = 0.3f), Offset.Zero, WaveVinylKit.sigmaToRadius(shadowSigma))
             // 边距：模糊外溢 + 入场时放大 6%
             val margin = ceil(3f * max(keywordEnterSigma, shadowSigma) + 0.04f * max(layout.size.width, layout.size.height) + 2f).toInt()
+            // 水印是画面装饰，不跟“歌词对齐”，仍居中
             val at = Offset(safe.center.x - layout.size.width / 2f, safe.center.y - layout.size.height / 2f)
             val box = inflate(Rect(at, Size(layout.size.width.toFloat(), layout.size.height.toFloat())), margin)
             keywordBox = box
             keywordPiece = WavePiece(layout, at - Offset(box.left.toFloat(), box.top.toFloat()))
         }
 
-        // 副行：水印下沿和底部之间（原模组 75% 高处 + 水印字号的 1/4），不压正文、不出安全区
+        // 副行：水印下沿和底部之间（原模组 75% 高处 + 水印字号的 1/4），不压正文、不出安全区，跟着“歌词对齐”
         if (content.subtitle.isNotEmpty()) {
             val subSp = baseSp * 0.4f
             subtitleEm = subSp.sp.toPx()
@@ -364,7 +375,7 @@ private class WaveScene(
                 fontSize = subSp.sp,
                 fontWeight = FontWeight.Normal,
                 lineHeight = 1.5.em,
-                textAlign = TextAlign.Center,
+                textAlign = align.align,
             )
             val layout = measurer.measure(
                 content.subtitle,
@@ -380,7 +391,7 @@ private class WaveScene(
             val shadowSigma = 8f * css / 2f
             subtitleShadow = Shadow(Color.Black.copy(alpha = 0.35f), Offset(0f, css), WaveVinylKit.sigmaToRadius(shadowSigma))
             val margin = ceil(3f * max(SUBTITLE_BLUR_EM * subtitleEm, shadowSigma) + css + 2f).toInt()
-            val at = Offset(safe.center.x - layout.size.width / 2f, centerY - half)
+            val at = Offset(lyricBlockLeft(align, band, layout.size.width.toFloat(), rtl), centerY - half)
             val box = inflate(Rect(at, Size(layout.size.width.toFloat(), layout.size.height.toFloat())), margin)
             subtitleBox = box
             subtitlePiece = WavePiece(layout, at - Offset(box.left.toFloat(), box.top.toFloat()))

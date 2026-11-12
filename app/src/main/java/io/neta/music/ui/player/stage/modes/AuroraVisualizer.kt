@@ -5,6 +5,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.text.TextLayoutResult
@@ -12,6 +13,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import io.neta.music.ui.player.stage.LyricStageContext
@@ -20,9 +22,10 @@ import io.neta.music.ui.player.stage.ModOrigin
 import io.neta.music.ui.player.stage.StageChar
 import io.neta.music.ui.player.stage.charTimings
 import io.neta.music.ui.player.stage.fitText
+import io.neta.music.ui.player.stage.lyricBlockLeft
 
 /**
- * 虹光（Folia 官方样例 sample-aurora-visualizer 1.0.1，AGPL-3.0）：只显示当前句、居中；
+ * 虹光（Folia 官方样例 sample-aurora-visualizer 1.0.1，AGPL-3.0）：只显示当前句，按“歌词对齐”排进安全区；
  * 每个字唱到时按起点换色相（起点秒数对 4 取余 × 70°，唱的过程中再转 40°），亮度从 58% 升到 72%，
  * 正在唱的那一下带同色光晕、上抬 2px（按 64px 字号折算），还没唱到的字是 28% 白。
  * 逐字时间沿用 LyricWord；没有逐字的歌把句长均分给每个字。
@@ -53,11 +56,13 @@ object AuroraVisualizer : LyricVisualizer {
                 val glyphs = ArrayList<AuroraGlyph>()
                 var blockTop = 0f
                 if (line != null && line.text.isNotBlank()) {
-                    val layout = fitText(measurer, line.text, style, (safe.width - padX * 2).toInt(), maxLines = 3)
+                    val align = ctx.display.alignment
+                    val band = Rect(safe.left + padX, safe.top, safe.right - padX, safe.bottom)
+                    val layout = fitText(measurer, line.text, style, (safe.width - padX * 2).toInt(), maxLines = 3, align = align.align)
                     val fitted = layout.layoutInput.style
                     blockTop = safe.center.y - layout.size.height / 2f
-                    // 一行放得下时排版宽度就是字宽（不是最大宽度），按自己的宽度居中
-                    val blockLeft = safe.center.x - layout.size.width / 2f
+                    // 一行放得下时排版宽度就是字宽（不是最大宽度），也按“歌词对齐”放进带里
+                    val blockLeft = lyricBlockLeft(align, band, layout.size.width.toFloat(), layoutDirection == LayoutDirection.Rtl)
                     var offset = 0
                     for (char in line.charTimings(spread = 1f)) {
                         val at = offset

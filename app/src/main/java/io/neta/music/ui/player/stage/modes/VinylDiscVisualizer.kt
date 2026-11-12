@@ -68,6 +68,7 @@ import io.neta.music.ui.player.stage.StageLine
 import io.neta.music.ui.player.stage.fitText
 import io.neta.music.ui.player.stage.formatPercent
 import io.neta.music.ui.player.stage.formatSeconds
+import io.neta.music.ui.player.stage.lyricBlockLeft
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
@@ -535,6 +536,10 @@ private fun VinylLyrics(ctx: LyricStageContext, config: VinylConfig, sung: Color
             // 歌词区很窄时（面板缩略图、小窗口）按一行至少放下 [MIN_ROW_CHARS] 个字缩小，平板横屏一行本来就有十几个字，不受影响
             val baseSp = min(ctx.display.textSp * TEXT_SCALE * config.textScale, area.width.toSp().value / MIN_ROW_CHARS)
             val basePx = baseSp.sp.toPx()
+            // “歌词对齐”：正文、副行、歌名都在歌词区里按它摆放（原来固定贴左）
+            val align = ctx.display.alignment
+            val rtl = layoutDirection == LayoutDirection.Rtl
+            val textLeft = { w: Float -> lyricBlockLeft(align, area, w, rtl) }
 
             // 歌名、歌手（只横屏）
             val header = if (geometry.header) {
@@ -565,12 +570,18 @@ private fun VinylLyrics(ctx: LyricStageContext, config: VinylConfig, sung: Color
                         TextStyle(fontFamily = family, fontSize = baseSp.sp, fontWeight = FontWeight.Bold, lineHeight = 1.5.em),
                         width,
                         maxLines = 3,
-                        align = TextAlign.Left,
+                        align = align.align,
                     )
                 } else {
                     measurer.measure(
                         content,
-                        TextStyle(fontFamily = family, fontSize = (baseSp * 0.8f).sp, fontWeight = FontWeight.SemiBold, lineHeight = 1.5.em),
+                        TextStyle(
+                            fontFamily = family,
+                            fontSize = (baseSp * 0.8f).sp,
+                            fontWeight = FontWeight.SemiBold,
+                            lineHeight = 1.5.em,
+                            textAlign = align.align,
+                        ),
                         overflow = TextOverflow.Ellipsis,
                         maxLines = 3,
                         constraints = Constraints(maxWidth = width),
@@ -581,7 +592,13 @@ private fun VinylLyrics(ctx: LyricStageContext, config: VinylConfig, sung: Color
                 val sub = subtitle.takeIf { it.isNotEmpty() }?.let {
                     measurer.measure(
                         it,
-                        TextStyle(fontFamily = family, fontSize = subPx.sp, fontWeight = FontWeight.Normal, lineHeight = 1.4.em),
+                        TextStyle(
+                            fontFamily = family,
+                            fontSize = subPx.sp,
+                            fontWeight = FontWeight.Normal,
+                            lineHeight = 1.4.em,
+                            textAlign = align.align,
+                        ),
                         overflow = TextOverflow.Ellipsis,
                         maxLines = 3,
                         constraints = Constraints(maxWidth = width),
@@ -610,28 +627,32 @@ private fun VinylLyrics(ctx: LyricStageContext, config: VinylConfig, sung: Color
             if (fit.header) y += headerHeight
             val laid = ArrayList<VinylRow>(kept)
             var activeTop = 0f
+            var activeLeft = area.left
             for (k in measured.indices) {
                 if (!fit.keep[k]) continue
                 val (i, layout, sub) = measured[k]
                 val active = i == shown
-                if (active) activeTop = y
+                if (active) {
+                    activeTop = y
+                    activeLeft = textLeft(layout.size.width.toFloat())
+                }
                 laid += VinylRow(
                     line = layout,
-                    lineAt = Offset(area.left, y),
+                    lineAt = Offset(textLeft(layout.size.width.toFloat()), y),
                     sub = sub,
-                    subAt = Offset(area.left, y + layout.size.height + subGapPx),
+                    subAt = Offset(if (sub != null) textLeft(sub.size.width.toFloat()) else area.left, y + layout.size.height + subGapPx),
                     alpha = vinylRowAlpha(abs(i - shown)),
                     active = active,
                 )
                 y += heights[k] + gap
             }
-            val karaoke = pieces.map { VinylPiece(it.layout, it.at + Offset(area.left, activeTop), it.word, it.from, it.to) }
+            val karaoke = pieces.map { VinylPiece(it.layout, it.at + Offset(activeLeft, activeTop), it.word, it.from, it.to) }
             val rise = basePx * 0.35f
             onDrawBehind {
                 clipRect(safe.left, safe.top, safe.right, safe.bottom) {
                     if (fit.header) {
-                        drawText(header[0], secondary.copy(alpha = secondary.alpha * 0.85f), Offset(area.left, headerAt))
-                        drawText(header[1], secondary.copy(alpha = secondary.alpha * 0.55f), Offset(area.left, headerAt + header[0].size.height + artistGap.sp.toPx()))
+                        drawText(header[0], secondary.copy(alpha = secondary.alpha * 0.85f), Offset(textLeft(header[0].size.width.toFloat()), headerAt))
+                        drawText(header[1], secondary.copy(alpha = secondary.alpha * 0.55f), Offset(textLeft(header[1].size.width.toFloat()), headerAt + header[0].size.height + artistGap.sp.toPx()))
                     }
                     for (row in laid) {
                         if (!row.active) {

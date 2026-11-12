@@ -29,6 +29,7 @@ import io.neta.music.playback.RHYTHM_BAND_COUNT
 import io.neta.music.ui.LyricLine
 import io.neta.music.ui.LyricWord
 import io.neta.music.ui.ParsedLyrics
+import io.neta.music.ui.theme.LyricsAlignment
 import kotlin.math.max
 import kotlin.math.roundToInt
 
@@ -495,6 +496,8 @@ class StageDisplay(
     val reserveBottom: Float = 0f,
     /** 舞台接收拖动和点按：只有 [LyricVisualizer.interactive] 的模式、不在电视上、不是缩略图时为 true。 */
     val touch: Boolean = false,
+    /** 歌词对齐（外观设置的“歌词对齐”）：文字块型模式排版和摆放跟着它；场景式排版（星潮、巨幕、跳一跳）不跟。 */
+    val alignment: LyricsAlignment = LyricsAlignment.Center,
 ) {
     /** 安全区，在绘制阶段用。 */
     fun safeRect(size: Size): Rect {
@@ -504,6 +507,16 @@ class StageDisplay(
 
     /** 电视上星星、年轮这类数量按六成画。 */
     val countScale: Float get() = if (tv) 0.6f else 1f
+}
+
+/**
+ * 宽 [width] 的文本块按 [alignment] 放进 [safe] 的左边 x：Center 居中，Start / End 贴对应边（[rtl] 时互换）。
+ * 模式摆放正文块统一走这里：短句的排版宽度就是字宽（见 [fitText]），也按对齐放，不按自身宽度居中。
+ */
+fun lyricBlockLeft(alignment: LyricsAlignment, safe: Rect, width: Float, rtl: Boolean = false): Float = when (alignment) {
+    LyricsAlignment.Start -> if (rtl) safe.right - width else safe.left
+    LyricsAlignment.Center -> safe.center.x - width / 2f
+    LyricsAlignment.End -> if (rtl) safe.left else safe.right - width
 }
 
 /**
@@ -536,7 +549,8 @@ class LyricStageContext internal constructor(
 
 /**
  * 长句排版：最多 [maxLines] 行，放不下就把字号乘 0.88 再试，最多 6 次。返回最后一次的排版结果。
- * 一行放得下时结果的宽度是字宽而不是 [maxWidth]（[align] 只在多行时起作用），摆放时按结果自己的宽度居中。
+ * 一行放得下时结果的宽度是字宽而不是 [maxWidth]（[align] 只在多行时起作用），摆放时用 [lyricBlockLeft]
+ * 按全局对齐放置；[align] 传 [StageDisplay.alignment] 的映射，多行的行内对齐和整体摆放就都跟着设置走。
  */
 fun fitText(
     measurer: TextMeasurer,

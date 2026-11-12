@@ -53,7 +53,7 @@ enum class FontScale(val label: String, val scale: Float) {
 
 /**
  * 歌词列表对齐：Start / End 跟随布局方向（中文左起即左对齐 / 靠右），
- * 只作用于播放页的经典歌词列表，全屏歌词动画和海报墙各有自己的排版。
+ * 作用于播放页的经典歌词列表和全屏歌词动画；星潮·银河、巨幕、跳一跳这类场景式排版和海报墙保持各自的排版。
  */
 enum class LyricsAlignment(val label: String) {
     Start("左对齐"),

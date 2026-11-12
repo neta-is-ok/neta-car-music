@@ -22,12 +22,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.neta.music.ui.theme.LyricsAlignment
 import kotlin.math.roundToInt
 
 /**
- * 宿主副行：当前句的翻译或罗马音（按“歌词下面那一行”的设置），居中排在安全区底部往上 14dp 处，再让出 [lift]。
+ * 宿主副行：当前句的翻译或罗马音（按“歌词下面那一行”的设置），按“歌词对齐”排在安全区底部往上 14dp 处，再让出 [lift]。
  * 换句时交叉淡入淡出；只随换句重组，位置在布局阶段按安全区算。
  */
 @Composable
@@ -39,7 +41,7 @@ internal fun HostSubtitle(ctx: LyricStageContext, mode: LyricVisualizer) {
         fontSize = size.sp,
         lineHeight = (size * 1.35f).sp,
         fontWeight = FontWeight.Medium,
-        textAlign = TextAlign.Center,
+        textAlign = ctx.display.alignment.align,
     )
     val color = MaterialTheme.colorScheme.onSurfaceVariant
     Crossfade(text, Modifier.fillMaxSize(), MaterialTheme.motionScheme.defaultEffectsSpec(), label = "hostSubtitle") { shown ->
@@ -58,7 +60,14 @@ internal fun HostSubtitle(ctx: LyricStageContext, mode: LyricVisualizer) {
                     layout(constraints.maxWidth, constraints.maxHeight) {
                         val stage = Size(constraints.maxWidth.toFloat(), constraints.maxHeight.toFloat())
                         val bottom = ctx.display.safeRect(stage).bottom - 14.dp.toPx() - mode.subtitleInset(ctx, stage, this)
-                        placeable.place(left + (available - placeable.width) / 2, (bottom - placeable.height).roundToInt())
+                        // 副行跟着“歌词对齐”走：Start / End 按布局方向翻转，和正文的 textAlign 一致
+                        val rtl = layoutDirection == LayoutDirection.Rtl
+                        val x = when (ctx.display.alignment) {
+                            LyricsAlignment.Start -> if (rtl) left + available - placeable.width else left
+                            LyricsAlignment.Center -> left + (available - placeable.width) / 2
+                            LyricsAlignment.End -> if (rtl) left else left + available - placeable.width
+                        }
+                        placeable.place(x, (bottom - placeable.height).roundToInt())
                     }
                 },
             )

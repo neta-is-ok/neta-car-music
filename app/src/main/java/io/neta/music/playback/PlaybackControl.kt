@@ -71,6 +71,7 @@ internal object PlaybackControl {
                 source = request.source.trim(),
                 limit = request.limit,
                 shuffle = request.shuffle,
+                requestId = request.requestId,
             )
         }
         val song = vm.currentSongForBroadcast()

@@ -339,7 +339,9 @@ class PlaybackService : MediaSessionService() {
             return START_NOT_STICKY
         }
         val result = super.onStartCommand(intent, flags, startId)
-        if (intent?.action == PlaybackBroadcast.ACTION_CONTROL && intent.getStringExtra("command") == "play") {
+        if (intent?.action == PlaybackBroadcast.ACTION_CONTROL &&
+            PlaybackBroadcast.isPlayRequest(intent.getStringExtra("command"))
+        ) {
             handler.removeCallbacks(foregroundGuard)
             broadcastStartId = startId
             broadcastPlayJob?.cancel()

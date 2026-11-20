@@ -5814,7 +5814,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     )
 
     /**
-     * MCP 连续点歌：歌手请求优先取歌手热门歌曲，类型 / 心情 / 场景请求优先取匹配歌单。
+     * 外部连续点歌（MCP / 广播共用）：歌手请求优先取歌手热门歌曲，类型 / 心情 / 场景请求优先取匹配歌单。
      * 与单曲点歌不同，这里明确换掉当前队列，避免第一首结束后回到点歌前的列表。
      */
     internal suspend fun playQueueFromBroadcast(
@@ -5823,6 +5823,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         source: String,
         limit: Int,
         shuffle: Boolean?,
+        requestId: String = "",
     ): Int {
         val query = keyword.trim()
         require(query.isNotBlank()) { "请提供歌手名或风格关键词" }
@@ -5845,14 +5846,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
         activeFeed = null
         _playlists.update { if (it.listenActive.isEmpty()) it else it.copy(listenActive = "") }
-        val started = startTrack(tracks.first(), tracks, pinnedProvider = null, openPlayer = false)
+        val started = startTrack(tracks.first(), tracks, pinnedProvider = null, openPlayer = false, playRequestId = requestId)
         if (!started) error(base.value.playbackNotice.ifBlank { base.value.error.ifBlank { "这组歌曲暂时无法播放" } })
         val player = controller ?: error("播放器尚未就绪")
         if (shuffle != null) player.shuffleModeEnabled = shuffle
         val playing = awaitPlaybackStart()
         if (playing) maybeAutoLyricsView()
         check(playing) { "播放尚未开始，请稍后查询状态" }
-        AppLog.i("Player", "MCP 连续播放“$query”，${tracks.size} 首，${if (player.shuffleModeEnabled) "随机" else "顺序"}播放")
+        AppLog.i("Player", "连续点歌“$query”，${tracks.size} 首，${if (player.shuffleModeEnabled) "随机" else "顺序"}播放")
         return tracks.size
     }
 

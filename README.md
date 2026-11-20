@@ -35,7 +35,7 @@ APK 输出到 `app/build/outputs/apk/debug/neta-car-music-0.0.14-14.apk`。SDK �
 
 ## 对外控制
 
-向包 `io.neta.music` 发送 `io.neta.music.action.CONTROL` 广播，通过字符串 `command` 点歌、收藏或切换播放模式；参数及结果字段见 [PlaybackBroadcastReceiver](app/src/main/java/io/neta/music/playback/PlaybackBroadcastReceiver.kt) 的接口说明。
+向包 `io.neta.music` 发送 `io.neta.music.action.CONTROL` 广播，通过字符串 `command` 点歌（单曲 `play` 与连续播放队列 `play_queue`）、收藏或切换播放模式；参数及结果字段见 [PlaybackBroadcastReceiver](app/src/main/java/io/neta/music/playback/PlaybackBroadcastReceiver.kt) 的接口说明。
 
 - 点歌播放会插播到当前歌曲之后，不打断正在播放的歌曲。
 - Android 调用方可携带平台 `android.os.ResultReceiver` 参数 `result_receiver`，结果直接回到发起进程，无需注册结果广播接收器。

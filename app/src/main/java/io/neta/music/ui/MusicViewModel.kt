@@ -5805,6 +5805,195 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         return playing
     }
 
+    private data class RequestedCollection(
+        val provider: ProviderInfo,
+        val item: Playlist,
+        val providerOrder: Int,
+        val resultOrder: Int,
+        val matchScore: Int,
+    )
+
+    /**
+     * MCP 连续点歌：歌手请求优先取歌手热门歌曲，类型 / 心情 / 场景请求优先取匹配歌单。
+     * 与单曲点歌不同，这里明确换掉当前队列，避免第一首结束后回到点歌前的列表。
+     */
+    internal suspend fun playQueueFromBroadcast(
+        keyword: String,
+        kind: String,
+        source: String,
+        limit: Int,
+        shuffle: Boolean?,
+    ): Int {
+        val query = keyword.trim()
+        require(query.isNotBlank()) { "请提供歌手名或风格关键词" }
+        val searchKind = when (kind.lowercase(Locale.ROOT)) {
+            "artist" -> SearchKind.Artist
+            "genre" -> SearchKind.Playlist
+            else -> throw IllegalArgumentException("kind 应为 artist 或 genre")
+        }
+        val queueLimit = limit.coerceIn(1, MAX_REQUEST_QUEUE_SIZE)
+        settingsReady.first { it }
+        awaitController() ?: error("播放器尚未就绪")
+        restoreJob?.await()
+
+        val providers = requestQueueProviders(searchKind, source)
+        val collectionTracks = if (providers.isEmpty()) emptyList() else {
+            requestCollectionTracks(query, searchKind, providers, queueLimit)
+        }
+        val tracks = collectionTracks.ifEmpty { requestSearchTracks(query, searchKind, source, queueLimit) }
+        require(tracks.isNotEmpty()) { "没有找到符合“$query”的歌曲" }
+
+        activeFeed = null
+        _playlists.update { if (it.listenActive.isEmpty()) it else it.copy(listenActive = "") }
+        val started = startTrack(tracks.first(), tracks, pinnedProvider = null, openPlayer = false)
+        if (!started) error(base.value.playbackNotice.ifBlank { base.value.error.ifBlank { "这组歌曲暂时无法播放" } })
+        val player = controller ?: error("播放器尚未就绪")
+        if (shuffle != null) player.shuffleModeEnabled = shuffle
+        val playing = awaitPlaybackStart()
+        if (playing) maybeAutoLyricsView()
+        check(playing) { "播放尚未开始，请稍后查询状态" }
+        AppLog.i("Player", "MCP 连续播放“$query”，${tracks.size} 首，${if (player.shuffleModeEnabled) "随机" else "顺序"}播放")
+        return tracks.size
+    }
+
+    private suspend fun requestQueueProviders(kind: SearchKind, source: String): List<ProviderInfo> {
+        val capable = app.repository.providers().filter {
+            when (kind) {
+                SearchKind.Artist -> it.searchArtist
+                else -> it.searchPlaylist && it.playlistSongs
+            }
+        }
+        val selected = if (source.isNotBlank()) {
+            capable.filter { it.id == source }
+        } else {
+            val enabled = settingsState.value.aggregation.enabledOrDefault(capable.map { it.id })
+            capable.filter { it.id in enabled }
+        }
+        val priority = settingsState.value.aggregation.priorityFor(selected.map { it.id })
+        return selected.sortedBy { provider ->
+            priority.indexOf(provider.id).let { if (it < 0) Int.MAX_VALUE else it }
+        }
+    }
+
+    private suspend fun requestCollectionTracks(
+        query: String,
+        kind: SearchKind,
+        providers: List<ProviderInfo>,
+        limit: Int,
+    ): List<CanonicalTrack> {
+        val results = ConcurrentHashMap<String, List<Playlist>>()
+        supervisorScope {
+            providers.forEach { provider ->
+                launch(Dispatchers.IO) {
+                    val lists = try {
+                        withTimeoutOrNull(REQUEST_COLLECTION_SEARCH_TIMEOUT_MS) {
+                            when (kind) {
+                                SearchKind.Artist -> app.repository.searchArtists(provider.id, cookieFor(provider.id), query)
+                                else -> app.repository.searchPlaylists(provider.id, cookieFor(provider.id), query)
+                            }
+                        }.orEmpty()
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (error: Exception) {
+                        AppLog.w("MCP", "${provider.name}${kind.label}搜索失败：${error.message}")
+                        emptyList()
+                    }
+                    if (lists.isNotEmpty()) results[provider.id] = lists
+                }
+            }
+        }
+        val queryKey = TrackNormalizer.keyOf(query)
+        val candidates = providers.flatMapIndexed { providerOrder, provider ->
+            results[provider.id].orEmpty().mapIndexedNotNull { resultOrder, item ->
+                if (item.id.isBlank()) null else RequestedCollection(
+                    provider = provider,
+                    item = item,
+                    providerOrder = providerOrder,
+                    resultOrder = resultOrder,
+                    matchScore = requestCollectionMatchScore(queryKey, item),
+                )
+            }
+        }.sortedWith(
+            compareByDescending<RequestedCollection> { it.matchScore }
+                .thenBy { it.providerOrder }
+                .thenBy { it.resultOrder }
+                .thenByDescending { it.item.trackCount },
+        )
+        for (candidate in candidates.take(MAX_REQUEST_COLLECTION_ATTEMPTS)) {
+            currentCoroutineContext().ensureActive()
+            val songs = try {
+                withContext(Dispatchers.IO) {
+                    withTimeoutOrNull(REQUEST_COLLECTION_LOAD_TIMEOUT_MS) {
+                        when (kind) {
+                            SearchKind.Artist -> app.repository.artistSongs(
+                                candidate.provider.id,
+                                cookieFor(candidate.provider.id),
+                                candidate.item.id,
+                            )
+                            else -> app.repository.playlistSongs(
+                                candidate.provider.id,
+                                cookieFor(candidate.provider.id),
+                                candidate.item.id,
+                            )
+                        }
+                    }.orEmpty()
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                AppLog.w("MCP", "${candidate.provider.name}读取《${candidate.item.name}》失败：${error.message}")
+                emptyList()
+            }
+            val tracks = songs.map(::canonicalForSong).distinctBy { it.id }.take(limit)
+            if (tracks.isNotEmpty()) return tracks
+        }
+        return emptyList()
+    }
+
+    /** 集合接口不可用时仍返回一组搜索结果；歌手请求只保留歌手名匹配的歌曲。 */
+    private suspend fun requestSearchTracks(
+        query: String,
+        kind: SearchKind,
+        source: String,
+        limit: Int,
+    ): List<CanonicalTrack> {
+        val all = app.repository.providers().filter { it.search }
+        val providers = if (source.isNotBlank()) {
+            all.filter { it.id == source }
+        } else {
+            val enabled = settingsState.value.aggregation.enabledOrDefault(all.map { it.id })
+            all.filter { it.id in enabled }
+        }
+        if (providers.isEmpty()) return emptyList()
+        val completed = searchEngine.search(query, providers).first { it is SearchUpdate.Completed } as SearchUpdate.Completed
+        val queryKey = TrackNormalizer.keyOf(query)
+        val matches = if (kind == SearchKind.Artist) {
+            completed.groups.filter { track ->
+                track.artists.any { artist ->
+                    val artistKey = TrackNormalizer.keyOf(artist)
+                    artistKey == queryKey || artistKey.contains(queryKey) || queryKey.contains(artistKey)
+                }
+            }
+        } else {
+            completed.groups
+        }
+        return matches.take(limit)
+    }
+
+    private fun requestCollectionMatchScore(queryKey: String, item: Playlist): Int {
+        val nameKey = TrackNormalizer.keyOf(item.name)
+        val creatorKey = TrackNormalizer.keyOf(item.creator)
+        val descriptionKey = TrackNormalizer.keyOf(item.description)
+        return when {
+            queryKey.isNotBlank() && nameKey == queryKey -> 10_000
+            queryKey.isNotBlank() && (nameKey.startsWith(queryKey) || queryKey.startsWith(nameKey)) -> 8_000
+            queryKey.isNotBlank() && nameKey.contains(queryKey) -> 6_000
+            queryKey.isNotBlank() && creatorKey.contains(queryKey) -> 4_000
+            queryKey.isNotBlank() && descriptionKey.contains(queryKey) -> 2_000
+            else -> 0
+        }
+    }
+
     /** 手机远控网页的搜歌：直接用聚合引擎取结果列表，不动界面的搜索状态。 */
     internal suspend fun searchForRemote(query: String): List<CanonicalTrack> {
         settingsReady.first { it }
@@ -6733,6 +6922,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
 private const val AUTO_MATCH_TIMEOUT_MS = 8_000L
 private const val MAX_UNPLAYABLE_SKIPS = 10
+
+/** MCP 连续点歌的网络与队列边界，避免一个语音请求拉取过多数据或长期占住 HTTP 工作线程。 */
+private const val REQUEST_COLLECTION_SEARCH_TIMEOUT_MS = 6_000L
+private const val REQUEST_COLLECTION_LOAD_TIMEOUT_MS = 8_000L
+private const val MAX_REQUEST_COLLECTION_ATTEMPTS = 3
+private const val MAX_REQUEST_QUEUE_SIZE = 100
 
 /** 直播断流重连：一分钟内最多重连两次，再断就停下留提示，免得一直重试。 */
 private const val LIVE_RETRY_WINDOW_MS = 60_000L

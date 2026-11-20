@@ -109,20 +109,23 @@ internal object PlaybackBroadcast {
         PlaybackControl.failure(IllegalArgumentException("播放控制请求格式不兼容，请更新发送请求的应用"))
     }
 
-    suspend fun execute(app: MyMusicApp, intent: Intent): Bundle = PlaybackControl.execute(
-        app,
-        PlaybackControlRequest(
-            command = intent.getStringExtra("command").orEmpty(),
-            keyword = intent.getStringExtra("keyword").orEmpty(),
-            source = intent.getStringExtra("source").orEmpty(),
-            songId = intent.getStringExtra("song_id").orEmpty(),
-            songJson = intent.getStringExtra("song_json").orEmpty(),
-            title = intent.getStringExtra("title").orEmpty(),
-            artist = intent.getStringExtra("artist").orEmpty(),
-            mode = intent.getStringExtra("mode").orEmpty(),
-            requestId = playRequestId(intent).orEmpty(),
-        ),
-    )
+    suspend fun execute(app: MyMusicApp, intent: Intent): Bundle {
+        require(intent.getStringExtra("command") != "play_queue") { "连续播放队列仅支持通过 MCP 调用" }
+        return PlaybackControl.execute(
+            app,
+            PlaybackControlRequest(
+                command = intent.getStringExtra("command").orEmpty(),
+                keyword = intent.getStringExtra("keyword").orEmpty(),
+                source = intent.getStringExtra("source").orEmpty(),
+                songId = intent.getStringExtra("song_id").orEmpty(),
+                songJson = intent.getStringExtra("song_json").orEmpty(),
+                title = intent.getStringExtra("title").orEmpty(),
+                artist = intent.getStringExtra("artist").orEmpty(),
+                mode = intent.getStringExtra("mode").orEmpty(),
+                requestId = playRequestId(intent).orEmpty(),
+            ),
+        )
+    }
 
     fun reply(context: Context, request: Intent, result: Bundle) {
         result.putString("command", request.getStringExtra("command").orEmpty())

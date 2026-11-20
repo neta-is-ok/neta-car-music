@@ -15,6 +15,9 @@ internal data class PlaybackControlRequest(
     val songJson: String = "",
     val title: String = "",
     val artist: String = "",
+    val queueKind: String = "",
+    val limit: Int = 30,
+    val shuffle: Boolean? = null,
     val mode: String = "",
     val requestId: String = "",
 )
@@ -39,8 +42,9 @@ internal object PlaybackControl {
         val command = request.command
         require(command in setOf(
             "favorite", "unfavorite", "toggle_favorite", "query_favorite",
-            "set_mode", "cycle_mode", "query_mode", "play",
+            "set_mode", "cycle_mode", "query_mode", "play", "play_queue",
         )) { "未知 command：$command" }
+        var queueSize: Int? = null
         if (command == "play") {
             val source = request.source.trim()
             val id = request.songId.trim()
@@ -60,6 +64,14 @@ internal object PlaybackControl {
             check(vm.playFromBroadcast(song, request.keyword.trim(), source, request.requestId)) {
                 "播放尚未开始，请稍后查询状态"
             }
+        } else if (command == "play_queue") {
+            queueSize = vm.playQueueFromBroadcast(
+                keyword = request.keyword.trim(),
+                kind = request.queueKind.trim(),
+                source = request.source.trim(),
+                limit = request.limit,
+                shuffle = request.shuffle,
+            )
         }
         val song = vm.currentSongForBroadcast()
         val player = vm.awaitController() ?: error("播放器尚未就绪")
@@ -107,6 +119,11 @@ internal object PlaybackControl {
             })
             putBoolean("shuffle", player.shuffleModeEnabled)
             putBoolean("playing", player.isPlaying)
+            putInt("queue_size", queueSize ?: player.mediaItemCount)
+            queueSize?.let {
+                putString("queue_kind", request.queueKind)
+                putString("queue_keyword", request.keyword)
+            }
         }
     }
 

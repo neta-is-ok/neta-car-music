@@ -60,7 +60,10 @@ internal class MusicMcpServer(private val app: MyMusicApp) : NanoHTTPD("127.0.0.
                     .put("protocolVersion", PROTOCOL_VERSION)
                     .put("capabilities", JSONObject().put("tools", JSONObject()))
                     .put("serverInfo", JSONObject().put("name", NAME).put("version", BuildConfig.VERSION_NAME))
-                    .put("instructions", "通过吒友爱听点歌。用户提供歌名或歌手时调用 play_song；get_playback_state 查询当前歌曲和播放状态。")
+                    .put(
+                        "instructions",
+                        "通过吒友爱听点歌。明确点一首歌时调用 play_song；用户想连续听某位歌手、某种风格、心情或场景的多首歌曲时调用 play_music_queue；get_playback_state 查询当前歌曲和播放状态。",
+                    )
                 "ping" -> JSONObject()
                 "tools/list" -> JSONObject().put("tools", tools())
                 "tools/call" -> call(params)
@@ -85,6 +88,14 @@ internal class MusicMcpServer(private val app: MyMusicApp) : NanoHTTPD("127.0.0.
                 songJson = string(args, "song_json"),
                 title = string(args, "title"),
                 artist = string(args, "artist"),
+            )
+            "play_music_queue" -> PlaybackControlRequest(
+                command = "play_queue",
+                keyword = string(args, "keyword"),
+                source = string(args, "source"),
+                queueKind = string(args, "kind"),
+                limit = integer(args, "limit", 30),
+                shuffle = boolean(args, "shuffle"),
             )
             "get_playback_state" -> PlaybackControlRequest(command = "query_mode")
             else -> throw IllegalArgumentException("未知工具：${params.optString("name")}")
@@ -113,8 +124,18 @@ internal class MusicMcpServer(private val app: MyMusicApp) : NanoHTTPD("127.0.0.
         return args.get(key) as? String ?: throw IllegalArgumentException("$key 应为字符串")
     }
 
+    private fun integer(args: JSONObject, key: String, default: Int): Int {
+        if (!args.has(key)) return default
+        return (args.get(key) as? Number)?.toInt() ?: throw IllegalArgumentException("$key 应为整数")
+    }
+
+    private fun boolean(args: JSONObject, key: String): Boolean? {
+        if (!args.has(key)) return null
+        return args.get(key) as? Boolean ?: throw IllegalArgumentException("$key 应为布尔值")
+    }
+
     private fun tools(): JSONArray {
-        val properties = JSONObject()
+        val songProperties = JSONObject()
         mapOf(
             "keyword" to "歌名、歌手或两者组合，通常只需填写此项；搜索首个结果后立即播放。",
             "source" to "可选平台 ID，如 netease、qq、kugou、kuwo、migu、jamendo；省略则使用应用已启用的音乐源。",
@@ -123,16 +144,43 @@ internal class MusicMcpServer(private val app: MyMusicApp) : NanoHTTPD("127.0.0.
             "artist" to "按歌曲 ID 点歌时可选的歌手。",
             "song_json" to "完整 Song 的 JSON 字符串，包含 id、source 及平台需要的 extra；优先于歌曲 ID 和关键词。",
         ).forEach { (key, description) ->
-            properties.put(key, JSONObject().put("type", "string").put("description", description))
+            songProperties.put(key, JSONObject().put("type", "string").put("description", description))
         }
+        val queueProperties = JSONObject()
+            .put("keyword", JSONObject()
+                .put("type", "string")
+                .put("description", "只填写歌手名或风格/心情/场景关键词，例如“周杰伦”“摇滚”“适合开车”。不要填写整句用户请求。"))
+            .put("kind", JSONObject()
+                .put("type", "string")
+                .put("enum", JSONArray().put("artist").put("genre"))
+                .put("description", "artist 表示某位歌手的多首歌曲；genre 表示风格、类型、心情或场景歌单。"))
+            .put("source", JSONObject()
+                .put("type", "string")
+                .put("description", "可选平台 ID，如 netease、qq、kugou、kuwo；省略则使用应用已启用的音乐源。"))
+            .put("limit", JSONObject()
+                .put("type", "integer")
+                .put("minimum", 1)
+                .put("maximum", 100)
+                .put("default", 30)
+                .put("description", "队列最多保留的歌曲数。"))
+            .put("shuffle", JSONObject()
+                .put("type", "boolean")
+                .put("description", "省略时保留当前随机播放设置；用户明确要求随机播放时设为 true，要求顺序播放时设为 false。循环模式始终保留当前设置。"))
         return JSONArray()
             .put(JSONObject()
                 .put("name", "play_song")
-                .put("description", "让吒友爱听立即播放用户想听的歌曲。通常传 keyword（歌名或歌名加歌手）；也支持平台歌曲 ID 或完整歌曲 JSON。复用应用与广播的搜索、音源解析和播放逻辑，不打开界面。已有播放队列时插播到当前歌曲之后，唱完接着放原列表。")
-                .put("inputSchema", JSONObject().put("type", "object").put("properties", properties)))
+                .put("description", "立即点播一首明确的歌曲。适用于“播放《晴天》”“我想听周杰伦的《晴天》”；已有队列时插播到当前歌曲之后，唱完接着放原列表。不要用于“我想听周杰伦的歌”“来点摇滚”这类期望多首歌曲的请求。")
+                .put("inputSchema", JSONObject().put("type", "object").put("properties", songProperties)))
+            .put(JSONObject()
+                .put("name", "play_music_queue")
+                .put("description", "连续播放一组符合条件的歌曲，并用新队列替换当前播放队列。适用于“我想听周杰伦的歌”“来点摇滚”“播放适合开车的歌”等多曲请求；歌手请求会优先加载歌手歌曲，风格/心情/场景请求会优先加载匹配歌单。")
+                .put("inputSchema", JSONObject()
+                    .put("type", "object")
+                    .put("properties", queueProperties)
+                    .put("required", JSONArray().put("keyword").put("kind"))))
             .put(JSONObject()
                 .put("name", "get_playback_state")
-                .put("description", "查询吒友爱听当前歌曲、是否正在播放、收藏状态和循环模式。")
+                .put("description", "查询吒友爱听当前歌曲、队列歌曲数、是否正在播放、收藏状态和循环模式。")
                 .put("inputSchema", JSONObject().put("type", "object").put("properties", JSONObject())))
     }
 

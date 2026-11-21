@@ -6919,6 +6919,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     fun backgroundUpdate() = app.update.continueInBackground()
 
+    fun dismissUpdate() = app.update.dismissUpdateDialog()
+
     fun installUpdate() {
         viewModelScope.launch { launchUpdateInstaller() }
     }
@@ -6989,11 +6991,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             // 部分盒子它恒为 false，拿它当条件会把用户卡在设置页和弹窗之间来回打转
             pendingUpdateInstall = false
             viewModelScope.launch { launchUpdateInstaller() }
-        } else if (update.phase == UpdatePhase.Ready && update.file != null &&
-            (lastInstallOutcome == InstallResult.Launched || lastInstallOutcome == null)
-        ) {
+        } else if (update.phase == UpdatePhase.Ready && update.file != null && lastInstallOutcome == null) {
             // 无论是否选择后台下载，回到应用后都自动打开已就绪更新的安装界面。
-            // 没拉起过（下载完时界面不在前台，比如组件在后台起播）也在这里拉起
+            // 没拉起过（下载完时界面不在前台，比如组件在后台起播）也在这里拉起。
+            // 已经拉起过的不再自动重开：Activity 安装器没有结果回调，安装失败或取消后
+            // 每次回前台都重弹就成了无限循环，之后交给用户手动点「重新打开安装器」。
             viewModelScope.launch { launchUpdateInstaller() }
         }
         // 没有待安装的更新时定期复查，发现新版本同样立刻下载

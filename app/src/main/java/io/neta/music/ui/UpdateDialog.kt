@@ -46,7 +46,7 @@ fun UpdateDialog(
 ) {
     val info = update.info ?: return
     val busy = update.phase == UpdatePhase.Downloading || update.phase == UpdatePhase.Verifying
-    val visible = !suppressed &&
+    val visible = !suppressed && !update.dialogDismissed &&
         (!update.backgroundDownload || update.phase == UpdatePhase.Ready || update.phase == UpdatePhase.Error) &&
         update.phase != UpdatePhase.Idle &&
         update.phase != UpdatePhase.Checking
@@ -87,11 +87,20 @@ fun UpdateDialog(
                 if (busy || update.phase == UpdatePhase.Ready) {
                     UpdateDialogProgress(update.phase, update.phaseLabel, progress)
                 }
-                Text(
-                    if (busy) "可以切换到后台下载，继续使用应用。" else "校验通过后会自动打开系统安装器。",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                val hint = when {
+                    busy -> "可以切换到后台下载，继续使用应用。"
+                    // 安装器已开过一轮：回来要么失败要么被取消，给出可操作的指引而不是再弹一遍
+                    update.installLaunched -> "刚才的安装没有完成？可点「重新打开安装器」重试；反复失败请在系统设置里允许本应用安装未知应用。"
+                    update.phase == UpdatePhase.Ready -> "校验通过后会自动打开系统安装器。"
+                    else -> null
+                }
+                if (hint != null) {
+                    Text(
+                        hint,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 if (update.permissionRequired) {
                     Text(
                         "允许本应用安装未知来源的应用后会自动继续安装。",
@@ -129,7 +138,7 @@ fun UpdateDialog(
             if (busy) TextButton(
                 onClick = actions::backgroundUpdate,
                 modifier = Modifier.focusRequester(actionFocus).tvFocusRing(CircleShape),
-            ) { Text("后台下载") }
+            ) { Text("后台下载") } else TextButton(onClick = actions::dismissUpdate) { Text("稍后再说") }
         },
     )
 }

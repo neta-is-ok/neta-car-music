@@ -990,6 +990,7 @@ internal fun SongActionsSheet(
             onDismiss()
             actions.openSourceForSong(target.song, target.queue)
         },
+        onCollect = { actions.collectOnPlatform(target.song) },
         onRemoveFromPlaylist = null,
         onDismiss = onDismiss,
         onWallLocate = onWallLocate,

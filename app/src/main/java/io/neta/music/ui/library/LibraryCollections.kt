@@ -248,6 +248,7 @@ fun FavoritesScreen(
                 actionSong = null
                 actions.openSourceForSong(song, songs)
             },
+            onCollect = { actions.collectOnPlatform(song) },
             onRemoveFromPlaylist = null,
             onDismiss = { actionSong = null },
             onRematch = if (song.source == LOCAL_SOURCE) ({ actionSong = null; unplayable.rematch = song }) else null,
@@ -428,6 +429,7 @@ fun HistoryScreen(
                 actionSong = null
                 actions.openSourceForSong(song, queue)
             },
+            onCollect = { actions.collectOnPlatform(song) },
             onRemoveFromPlaylist = null,
             onDismiss = { actionSong = null },
             onRematch = if (song.source == LOCAL_SOURCE) ({ actionSong = null; unplayable.rematch = song }) else null,

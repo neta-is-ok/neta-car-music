@@ -136,6 +136,13 @@ open class MusicRepository(
     suspend fun playlistWritable(provider: String, cookie: String, id: String): Boolean? =
         requireProvider(provider).playlistWritable(cookie, id)
 
+    /** 平台有没有账号侧的「收藏到我喜欢」；界面据此决定显不显示这一行。 */
+    fun supportsCollect(provider: String): Boolean =
+        runCatching { requireProvider(provider).supportsCollect() }.getOrDefault(false)
+
+    suspend fun collectTrack(provider: String, cookie: String, song: Song) =
+        requireProvider(provider).collectTrack(cookie, song)
+
     suspend fun addPlaylistTracks(provider: String, cookie: String, playlistId: String, songs: List<Song>) =
         requireProvider(provider).addPlaylistTracks(cookie, playlistId, songs)
 

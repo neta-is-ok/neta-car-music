@@ -671,6 +671,7 @@ fun LocalPlaylistScreen(
                 actionEntry = null
                 actions.openSourceForSong(song, songs)
             },
+            onCollect = { actions.collectOnPlatform(song) },
             onRemoveFromPlaylist = if (readOnly) null else ({
                 remove(entry, song)
                 actionEntry = null

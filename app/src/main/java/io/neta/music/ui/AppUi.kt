@@ -199,6 +199,8 @@ class MusicActions(private val model: MusicViewModel) {
     val position: kotlinx.coroutines.flow.StateFlow<Long> get() = model.position
     fun clearQueue() = model.clearQueue()
     fun favorite(song: Song) = model.toggleFavorite(song)
+    /** 收藏到平台账号（汽水的「我喜欢的音乐」）；平台没实现或没登录时由界面提示。 */
+    fun collectOnPlatform(song: Song) = model.collectOnPlatform(song)
     fun download(song: Song) = model.download(song)
     fun openDeepLink() = model.openDeepLink()
     fun clearError() = model.clearError()
@@ -627,6 +629,8 @@ fun TrackActionsSheet(
      * （歌曲信息只在本地音乐页里），选好的匹配记进线索表并同步回有文件的设备。非本地歌为 null。
      */
     onRematch: (() -> Unit)? = null,
+    /** 收藏到平台账号（汽水的「我喜欢的音乐」）；平台没有这个能力时为 null，不显示这一行。 */
+    onCollect: (() -> Unit)? = null,
     /** “查看歌手：某某”，每位歌手一行（最多 3 位）；参数是点的那位歌手名。 */
     onOpenArtist: ((String) -> Unit)? = null,
     /** “查看专辑：某某”。歌曲没有专辑名时不显示。 */
@@ -669,6 +673,7 @@ fun TrackActionsSheet(
                 }?.let { SheetRow(Icons.Filled.Album, "查看专辑：${song.album}", false, it) }
                 val rows = artistRows + listOfNotNull(
                     albumRow,
+                    onCollect?.let { SheetRow(Icons.Filled.FavoriteBorder, "收藏到账号", false, it) },
                     onRematch?.let { SheetRow(Icons.Filled.FindReplace, "换一个匹配", false, it) },
                     onOpenSource?.let { SheetRow(Icons.Filled.SwapHoriz, "选择音源 / 查看其他版本", false, it) },
                     onMerge?.let { SheetRow(Icons.AutoMirrored.Filled.CallMerge, "合并到…", false, it) },

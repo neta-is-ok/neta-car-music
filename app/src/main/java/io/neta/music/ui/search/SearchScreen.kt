@@ -455,6 +455,7 @@ fun SearchScreen(
                 actionTrack.value = null
                 ctx.openSource(track)
             },
+            onCollect = { actions.collectOnPlatform(song) },
             onRemoveFromPlaylist = null,
             onDismiss = { actionTrack.value = null },
             onMerge = {
@@ -1309,6 +1310,8 @@ private fun TrackMenu(ctx: SearchCtx, track: CanonicalTrack, expanded: Boolean, 
                 onClick = { pickPlaylist = true },
             )
             MenuItem("下载", Icons.Filled.Download) { onDismiss(); ctx.actions.download(song) }
+            // 车机/平板形态的行菜单没有底部弹层，收藏到账号只能从这里进（上游只做了手机形态）
+            MenuItem("收藏到账号", Icons.Filled.FavoriteBorder) { onDismiss(); ctx.actions.collectOnPlatform(song) }
             HorizontalDivider()
             MenuItem("换源", Icons.Filled.SwapHoriz) { onDismiss(); ctx.openSource(track) }
             MenuItem("合并到…", Icons.Filled.Merge) { onDismiss(); ctx.actions.openMerge(track) }

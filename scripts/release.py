@@ -24,6 +24,8 @@ GRADLEW = "gradlew.bat" if os.name == "nt" else "./gradlew"
 def command(*args, timeout=None):
     return subprocess.run(
         args, cwd=ROOT, check=True, text=True, capture_output=True, timeout=timeout,
+        # Windows 上的 apksigner.bat 输出是 GBK，关键字段（DN / SHA-256）是 ASCII，坏字节替换掉不影响核对
+        encoding="utf-8", errors="replace",
     ).stdout.strip()
 
 

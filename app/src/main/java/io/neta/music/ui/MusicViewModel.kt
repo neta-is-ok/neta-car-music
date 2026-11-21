@@ -4954,9 +4954,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             val notice = "已跳过《$title》：$message"
             skipNotice = notice
             base.value = base.value.copy(playbackNotice = notice)
+            // seek 是异步命令，发完立刻读 currentMediaItemIndex 多半还是旧位置（换源失败的
+            // 旧地址非空，会被误判成下一首再 prepare 一轮）；先记下下一首的真实位置再跳
+            val next = player.nextMediaItemIndex
             player.seekToNextMediaItem()
             // 下一首已经有地址就直接重新准备；还是空地址的等它切歌解析完再准备，不让播放器再去打开 ""
-            if (base.value.queue.getOrNull(player.currentMediaItemIndex)?.url?.isNotBlank() == true) prepareIfStopped()
+            if (base.value.queue.getOrNull(next)?.url?.isNotBlank() == true) prepareIfStopped()
         }
 
         override fun onPlaybackStateChanged(playbackState: Int) {
@@ -5091,8 +5094,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 } else {
                     val message = noSourceMessage(result.track, result.resolution)
                     PlaybackBroadcast.logPlaybackFailure(failedItem, message)
-                    controller?.pause()
-                    base.value = base.value.copy(playbackNotice = message)
+                    // 换源也没救回来时不能干停在原曲上：照切歌解析失败的处置跳下一首
+                    // （skipUnplayable 里没有下一首或连跳太多首才暂停留提示）。先放下
+                    // failoverInProgress 再跳，跳过去之后的报错才能正常进来分流。
+                    failoverInProgress = false
+                    skipUnplayable(index, track.title, message)
+                    return@launch
                 }
                 failoverInProgress = false
             }

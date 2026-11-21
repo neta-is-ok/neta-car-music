@@ -32,6 +32,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipNext
@@ -49,7 +50,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -241,7 +246,7 @@ internal fun WidePlayer(
                     }
                 },
                 { if (showFocus) FocusHeader(song, actions, idle, focusAlpha, focusChrome) },
-                { if (showFocus) FocusDock(playing, actions, idle, !lyricsMode, focusChrome, onLyricsMode, onOpenQueue, stage.onOpenSheet) },
+                { if (showFocus) FocusDock(song, playing, actions, idle, !lyricsMode, focusChrome, onLyricsMode, onOpenQueue, stage.onOpenSheet) },
                 {
                     // 专注歌词换成了动画舞台时，歌词栏随过渡淡出，稳定后不再组合
                     if (!stage.custom || showDefault) {
@@ -378,6 +383,7 @@ private fun FocusHeader(song: Song, actions: MusicActions, idle: IdleState, alph
  */
 @Composable
 private fun FocusDock(
+    song: Song,
     playing: Boolean,
     actions: MusicActions,
     idle: IdleState,
@@ -387,6 +393,7 @@ private fun FocusDock(
     onOpenQueue: () -> Unit,
     onOpenSheet: () -> Unit,
 ) {
+    var playlistOpen by rememberSaveable { mutableStateOf(false) }
     WideGuard(idle, blocked, Modifier.graphicsLayer { this.alpha = alpha() }) {
         VerticalFloatingToolbar(
             expanded = true,
@@ -411,9 +418,12 @@ private fun FocusDock(
                 ToolbarLyricsButton(on = true, onToggle = onLyricsMode)
                 ToolbarAnimationButton(onOpenSheet)
                 ToolbarQueueButton(onOpenQueue)
+                // 专注歌词态也留一个「加到歌单」：不用退回封面布局再翻菜单
+                io.neta.music.ui.player.ToolbarIconButton(Icons.AutoMirrored.Filled.PlaylistAdd, "加到歌单", { playlistOpen = true })
             }
         }
     }
+    if (playlistOpen) io.neta.music.ui.AddToPlaylistSheet(song = song, actions = actions, onDismiss = { playlistOpen = false })
 }
 
 @Composable

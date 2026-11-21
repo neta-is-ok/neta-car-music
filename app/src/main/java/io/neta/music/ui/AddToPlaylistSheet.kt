@@ -10,7 +10,7 @@ import io.neta.music.data.Song
  * 上游的勾选式面板（在几个歌单间勾来勾去、可撤销）依赖歌单编辑的并发改造，这里用简单版。
  */
 @androidx.compose.runtime.Composable
-fun AddToPlaylistSheet(song: Song, providers: List<ProviderInfo>, actions: MusicActions, onDismiss: () -> Unit) {
+fun AddToPlaylistSheet(song: Song, actions: MusicActions, onDismiss: () -> Unit, providers: List<ProviderInfo> = emptyList()) {
     val playlists by actions.localPlaylists.collectAsState()
     PlaylistPickerSheet(
         playlists = playlists,

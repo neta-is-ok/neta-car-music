@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.Lyrics
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.SwapHoriz
@@ -79,6 +80,7 @@ import io.neta.music.ui.withSubline
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import io.neta.music.ui.AddToPlaylistSheet
 import io.neta.music.ui.player.share.LocalLyricPickProbe
 import io.neta.music.ui.player.share.LyricPickProbe
 import io.neta.music.ui.player.share.ShareOverlay
@@ -499,7 +501,9 @@ internal fun MoreMenu(
 ) {
     var open by remember { mutableStateOf(false) }
     var lyricsSizeOpen by rememberSaveable { mutableStateOf(false) }
-    KeepPlayerAwake(idle, open || lyricsSizeOpen)
+    // 「加到歌单」面板：打开那一刻的这首。面板开着时切了歌，勾的还是打开时那首
+    var playlistOpen by rememberSaveable { mutableStateOf(false) }
+    KeepPlayerAwake(idle, open || lyricsSizeOpen || playlistOpen)
     Box {
         IconButton(onClick = { open = true }) { Icon(Icons.Filled.MoreVert, "更多", tint = MaterialTheme.colorScheme.onSurface) }
         DropdownMenu(open, onDismissRequest = { open = false }, shape = RoundedCornerShape(20.dp)) {
@@ -508,6 +512,11 @@ internal fun MoreMenu(
             // 收起播放页，露出队列海报墙
             DropdownMenuItem(text = { Text("海报墙") }, leadingIcon = { Icon(Icons.Filled.GridView, null) }, onClick = { open = false; actions.openPosterWall() })
             DropdownMenuItem(text = { Text("选择音源") }, leadingIcon = { Icon(Icons.Filled.SwapHoriz, null) }, onClick = { open = false; onOpenSource() })
+            DropdownMenuItem(
+                text = { Text("加到歌单…") },
+                leadingIcon = { Icon(Icons.AutoMirrored.Filled.PlaylistAdd, null) },
+                onClick = { open = false; playlistOpen = true },
+            )
             // 收起播放页，打开歌手页 / 专辑页；直播（电台）没有这两项
             if (!song.isLive) {
                 splitArtistNames(song.artist).take(3).forEach { name ->
@@ -532,6 +541,7 @@ internal fun MoreMenu(
         }
     }
     if (lyricsSizeOpen) LyricsSizeSheet(actions, onDismiss = { lyricsSizeOpen = false })
+    if (playlistOpen) AddToPlaylistSheet(song = song, actions = actions, onDismiss = { playlistOpen = false })
 }
 
 /**

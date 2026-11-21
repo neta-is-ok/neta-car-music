@@ -112,8 +112,12 @@ class PlaybackService : MediaSessionService() {
         // 其余原样走默认工厂。包在缓存里面，云端副本和在线歌一样进播放缓存，但不会存进“下载”
         // music.op.wiki 的音频要绕过证书校验（它的证书链在部分系统上不被信任），按域名把这两个
         // 主机的地址交给 OkHttp，别的源照旧走系统默认那套。见 MHubTls。
-        val upstream = MHubTls.RoutingFactory(
-            fallback = app?.cloud?.routing(DefaultDataSource.Factory(this)) ?: DefaultDataSource.Factory(this),
+        // 最外面再包一层 B 站 CDN 的防盗链：ExoPlayer 默认那把 UA 会被 *.bilivideo.com 403，
+        // 取流拿到的地址自己放不出来。见 BilibiliCdnFactory。
+        val upstream = BilibiliCdnFactory(
+            fallback = MHubTls.RoutingFactory(
+                fallback = app?.cloud?.routing(DefaultDataSource.Factory(this)) ?: DefaultDataSource.Factory(this),
+            )
         )
         val baseFactory = DefaultMediaSourceFactory(
                 cache?.let {

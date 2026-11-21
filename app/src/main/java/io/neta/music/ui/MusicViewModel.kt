@@ -103,6 +103,7 @@ import io.neta.music.data.local.LocalLibrary
 import io.neta.music.data.local.LocalPlayable
 import io.neta.music.data.local.forStorage
 import io.neta.music.data.TopList
+import io.neta.music.data.native.BilibiliCdn
 import io.neta.music.data.TrackOverrideEntity
 import io.neta.music.data.native.AppleLyricsConfig
 import io.neta.music.data.native.AudioQuality
@@ -655,8 +656,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         settings = { settingsState.value.aggregation },
         splitOverrides = { splitOverrideKeys },
         mergeOverrides = { mergeTargets },
-        // music.op.wiki 一次搜索要等 MHub 去各上游平台检索，冷缓存单平台就可能 5 秒
-        timeoutOverridesMs = mapOf("mhub" to 15_000),
+        // music.op.wiki 一次搜索要等 MHub 去各上游平台检索，冷缓存单平台就可能 5 秒；
+        // Spotify 未登录时匿名 Web Player 要串行 bootstrap + token + clientToken + 搜索四次请求，
+        // 网络稍慢就过 6 秒（token 有缓存，只有首次这么慢）
+        timeoutOverridesMs = mapOf("mhub" to 15_000, "spotify" to 15_000),
     )
     private val resolver = SourceResolver(
         repository = app.repository,
@@ -3418,7 +3421,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     if (!cached.isFile) error("本地缓存文件不存在")
                     cached.copyTo(temp, overwrite = true)
                 } else {
-                    http.newCall(Request.Builder().url(url).build()).execute().use { response ->
+                    // B 站的音频字节在 *.bilivideo.com 上，不带 Referer 和浏览器档 UA 就是 403
+                    // （播放侧那套工厂管不到这里，这次下载是自己发的请求）
+                    val builder = Request.Builder().url(url)
+                    BilibiliCdn.headers(url).forEach { (name, value) -> builder.header(name, value) }
+                    http.newCall(builder.build()).execute().use { response ->
                         if (!response.isSuccessful) error("下载失败：${response.code} ${response.message}")
                         temp.outputStream().use { output -> response.body.byteStream().copyTo(output) }
                     }

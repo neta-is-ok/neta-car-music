@@ -1884,9 +1884,19 @@ class SodaProvider : BaseNativeProvider(SODA_INFO) {
             return Uri.fromFile(file).toString()
         }
 
-        val encoded = downloadBytes(info.url)
-        if (encoded.isEmpty()) throw IllegalStateException("soda 音频下载为空")
-        val plain = SodaDecrypt.decryptAudio(encoded, info.playAuth)
+        // 无损整曲几十 MB，180 秒的总超时一次下不完：加密字节先落 .part，断了接着要
+        val downloaded = SodaResumableDownloader(SODA_STREAM_CLIENT, SODA_USER_AGENT).download(
+            url = info.url,
+            target = file,
+            // 密钥指纹：换签名 / 换档后旧字节解不开，必须重下
+            keyFingerprint = NativeCrypto.md5Hex(info.playAuth),
+        )
+        if (downloaded.bytes.isEmpty()) throw IllegalStateException("soda 音频下载为空")
+        if (downloaded.report.resumedFrom > 0) {
+            AppLog.i(TAG, "续传生效 trackId=$trackId 接上=${downloaded.report.resumedFrom}B " +
+                "本次=${downloaded.report.transferred}B 共=${downloaded.report.onDisk}B")
+        }
+        val plain = SodaDecrypt.decryptAudio(downloaded.bytes, info.playAuth)
         val tmp = File(dir, "$name.tmp")
         tmp.writeBytes(plain)
         if (!tmp.renameTo(file)) {
@@ -1895,35 +1905,6 @@ class SodaProvider : BaseNativeProvider(SODA_INFO) {
         }
         pruneCache(dir)
         return Uri.fromFile(file).toString()
-    }
-
-    private suspend fun downloadBytes(url: String): ByteArray = suspendCancellableCoroutine { continuation ->
-        val request = Request.Builder().url(url).get().header("User-Agent", SODA_USER_AGENT).build()
-        val call = SODA_STREAM_CLIENT.newCall(request)
-        continuation.invokeOnCancellation { call.cancel() }
-        call.enqueue(object : Callback {
-            override fun onFailure(call: Call, e: IOException) {
-                if (continuation.isActive) continuation.resumeWithException(e)
-            }
-
-            override fun onResponse(call: Call, response: Response) {
-                response.use {
-                    if (!it.isSuccessful) {
-                        if (continuation.isActive) {
-                            continuation.resumeWithException(
-                                IOException("soda audio download failed: HTTP ${it.code}")
-                            )
-                        }
-                        return
-                    }
-                    val bytes = runCatching { it.body?.bytes() ?: ByteArray(0) }.getOrElse { error ->
-                        if (continuation.isActive) continuation.resumeWithException(error)
-                        return
-                    }
-                    if (continuation.isActive) continuation.resume(bytes)
-                }
-            }
-        })
     }
 
     private fun pruneCache(dir: File) {

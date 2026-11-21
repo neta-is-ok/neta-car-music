@@ -18,6 +18,9 @@ ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY = "neta-is-ok/neta-car-music"
 
 
+GRADLEW = "gradlew.bat" if os.name == "nt" else "./gradlew"
+
+
 def command(*args, timeout=None):
     return subprocess.run(
         args, cwd=ROOT, check=True, text=True, capture_output=True, timeout=timeout,
@@ -103,7 +106,7 @@ def prepare(notes_path):
     min_sdk = int(re.search(r'^minSdk = "(\d+)"', versions, re.MULTILINE).group(1))
     print(f"本地编译并签名 {tag}……", flush=True)
     subprocess.run(
-        ["./gradlew", ":app:assembleRelease", "--max-workers=1", f"-PreleaseRepository={REPOSITORY}"],
+        [GRADLEW, ":app:assembleRelease", "--max-workers=1", f"-PreleaseRepository={REPOSITORY}"],
         cwd=ROOT, check=True, env={**os.environ, "KEYSTORE": str(ROOT / "keystore.jks")},
     )
     output = ROOT / "app/build/outputs/apk/release"

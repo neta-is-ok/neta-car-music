@@ -369,7 +369,9 @@ class WebDavClient(
             step = WebDavCheckStep.Write
             val probe = WebDavPaths.join(dir, ".mymusic-probe-${randomHex(6)}.txt")
             val payload = "myMusic WebDAV 连接测试 ${System.currentTimeMillis()}".toByteArray(Charsets.UTF_8)
-            putBytes(probe, payload, TEXT, WebDavCondition.IfNoneMatchAny)
+            // 探测文件名是随机的，不存在和谁竞争，不带条件——有些服务器对 If-None-Match 的
+            // 处理和 If-Match 一样不靠谱，别让测试连接被误报成“文件刚被修改”
+            putBytes(probe, payload, TEXT)
             written = probe
             step = WebDavCheckStep.ReadBack
             val back = read(probe, maxBytes = 64 * 1024)

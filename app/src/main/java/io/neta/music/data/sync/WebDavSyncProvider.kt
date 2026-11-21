@@ -17,7 +17,8 @@ import kotlinx.coroutines.CancellationException
  * remoteId 是同步文件相对服务器地址的路径，例如 `myMusic/mymusic-library.json`。
  *
  * 防覆盖靠 ETag：第一次建文件用 `If-None-Match: *`，之后用 `If-Match: <读到的 ETag>`；
- * 412 抛 [SyncFailureKind.Precondition]，SyncCoordinator 重新读、重新合并（和 Gist 发现云端变了一样）。
+ * 412 抛 [SyncFailureKind.Precondition]，SyncCoordinator 重读分辨真假——内容没变（ETag 不稳，
+ * OpenList 这类服务器每个请求给的都不一样）就退回无条件的重写，真变了才重新合并。
  */
 class WebDavSyncProvider(
     private val newClient: (WebDavAccount) -> WebDavClient = { WebDavClient(it) },
@@ -72,7 +73,14 @@ class WebDavSyncProvider(
     override suspend fun create(token: String, content: String): RemoteFile = call(token) { client, account ->
         client.ensureDirectory(account.normalizedDirectory)
         val path = account.pathInDirectory(fileName)
-        write(client, path, content, WebDavCondition.IfNoneMatchAny)
+        try {
+            write(client, path, content, WebDavCondition.IfNoneMatchAny)
+        } catch (error: WebDavException) {
+            // 412 说文件已存在；目录里再核实一遍，确实没有就是服务器把 If-None-Match 也搞错了
+            // （和 If-Match 一样不可靠的服务器是有的），不带条件重试，别让第一次连接卡死
+            if (error.kind != WebDavErrorKind.PreconditionFailed || client.stat(path) != null) throw error
+            write(client, path, content, WebDavCondition.None)
+        }
     }
 
     override suspend fun update(

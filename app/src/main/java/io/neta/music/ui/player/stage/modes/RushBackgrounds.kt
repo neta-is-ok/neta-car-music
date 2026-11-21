@@ -35,6 +35,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.BlurEffect
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
@@ -242,7 +243,7 @@ internal class RushSpring(stiffness: Float) {
 }
 
 @RequiresApi(Build.VERSION_CODES.TIRAMISU)
-private class RushHypnoticShader private constructor(private val shader: RuntimeShader) {
+internal class RushHypnoticShader private constructor(private val shader: RuntimeShader) {
     val brush = ShaderBrush(shader)
     private val uniforms = FloatArray(RUSH_HYPNOTIC_COLORS * 3)
 
@@ -263,6 +264,19 @@ private class RushHypnoticShader private constructor(private val shader: Runtime
         } catch (_: RuntimeException) {
             null
         }
+    }
+}
+
+/**
+ * 流光的静止帧（时间 0）：歌词分享的「流光」卡用，导出结果确定。[shader] 在 Android 13 起由调用方建一次
+ * （[RushHypnoticShader.createOrNull]），更早或建不出来时退回上下渐变（Rush 自己也这样退）。
+ */
+internal fun DrawScope.drawRushHypnoticStill(shader: Any?, colors: List<Color>) {
+    if (Build.VERSION.SDK_INT >= 33 && shader is RushHypnoticShader) {
+        shader.update(0f, size.width, size.height, colors)
+        drawRect(shader.brush)
+    } else {
+        drawRect(Brush.verticalGradient(colors))
     }
 }
 

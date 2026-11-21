@@ -129,9 +129,8 @@ fun MyMusicTheme(appearance: Appearance, coverSeed: Color?, content: @Composable
 
 /** 播放页固定深色，用同一个种子色生成彩度更高的 Vibrant 配色。 */
 @Composable
-fun PlayerTheme(content: @Composable () -> Unit) {
+fun PlayerTheme(seed: Color = LocalSeedColor.current, content: @Composable () -> Unit) {
     val appearance = LocalAppearance.current
-    val seed = LocalSeedColor.current
     val scheme = remember(appearance, seed) { appColorScheme(appearance, seed, dark = true, forPlayer = true) }
     MaterialExpressiveTheme(
         colorScheme = animated(scheme, appearance.reduceMotion),

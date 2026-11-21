@@ -40,6 +40,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
@@ -130,6 +131,9 @@ fun <T> ConnectedToggleGroup(
     label: (T) -> String,
     modifier: Modifier = Modifier,
     icon: ((T) -> ImageVector?)? = null,
+    selectedFocus: FocusRequester? = null,
+    /** 行内紧凑版：分享面板这类空间紧的地方用，按钮矮一截。 */
+    compact: Boolean = false,
 ) {
     Row(modifier, horizontalArrangement = Arrangement.spacedBy(ButtonGroupDefaults.ConnectedSpaceBetween)) {
         options.forEachIndexed { index, option ->
@@ -139,7 +143,7 @@ fun <T> ConnectedToggleGroup(
                 onCheckedChange = { onSelect(option) },
                 modifier = Modifier
                     .weight(1f)
-                    .heightIn(min = 48.dp)
+                    .heightIn(min = if (compact) 36.dp else 48.dp)
                     .tvFocusRing()
                     .semantics { role = Role.RadioButton },
                 shapes = when (index) {

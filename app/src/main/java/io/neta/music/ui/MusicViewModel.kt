@@ -253,6 +253,8 @@ data class MusicUiState(
     val rhythmDebug: Boolean = false,
     val poster: PosterPrefs = PosterPrefs(),
     /** 全屏歌词动画（模式、自动切换、频谱、各模式设置）。 */
+    val swipe: io.neta.music.data.SwipePrefs = io.neta.music.data.SwipePrefs(),
+    val share: io.neta.music.data.SharePrefs = io.neta.music.data.SharePrefs(),
     val lyricStage: LyricStagePrefs = LyricStagePrefs(),
     /** 歌词文字变换（拆单行双语、简转繁、补罗马音）。 */
     val lyricText: LyricTextPrefs = LyricTextPrefs(),
@@ -621,6 +623,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             rhythmOffsetMs = settings.rhythmOffsetMs,
             rhythmDebug = settings.rhythmDebug,
             poster = settings.poster,
+            swipe = settings.swipe,
+            share = settings.share,
             lyricStage = settings.lyricStage,
             lyricText = settings.lyricText,
             collectionView = settings.collectionView,
@@ -2574,6 +2578,19 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 "write=${info?.playlistWrite} reorder=${info?.playlistReorder}",
         )
         return mode
+    }
+
+    fun createPlaylistWithSong(name: String, song: Song) = viewModelScope.launch {
+        val value = name.trim()
+        if (value.isBlank()) return@launch
+        val now = System.currentTimeMillis()
+        val id = java.util.UUID.randomUUID().toString()
+        libraryDao.putPlaylist(
+            io.neta.music.data.PlaylistEntity(id = id, name = value, createdAt = now, updatedAt = now, dirty = true)
+        )
+        addSongsToPlaylist(id, listOf(song))
+        app.sync.onLocalChange()
+        message("已新建歌单「$value」并加入这首歌")
     }
 
     fun addSongToPlaylist(playlistId: String, song: Song) =
@@ -6210,6 +6227,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun setRhythmDebug(value: Boolean) = viewModelScope.launch { app.settings.rhythmDebug(value) }
     fun setPosterPrefs(transform: (PosterPrefs) -> PosterPrefs) = viewModelScope.launch { app.settings.poster(transform) }
     fun setLyricStage(transform: (LyricStagePrefs) -> LyricStagePrefs) = viewModelScope.launch { app.settings.lyricStage(transform) }
+    fun setSwipePrefs(transform: (io.neta.music.data.SwipePrefs) -> io.neta.music.data.SwipePrefs) =
+        viewModelScope.launch { app.settings.swipe(transform) }
+    fun setSharePrefs(transform: (io.neta.music.data.SharePrefs) -> io.neta.music.data.SharePrefs) =
+        viewModelScope.launch { app.settings.share(transform) }
+    fun addToQueue(song: Song) = enqueueSongs(listOf(song))
     fun setLyricText(transform: (LyricTextPrefs) -> LyricTextPrefs) = viewModelScope.launch { app.settings.lyricText(transform) }
     suspend fun lyricMemory(songKey: String): LyricMemoryEntry? = app.settings.lyricMemory(songKey)
 

@@ -84,6 +84,10 @@ private fun SectionContent(
             val lyricon by app.model.lyriconSubscription.collectAsState()
             LyricsSettingsScreen(state, actions, lyricon, onBack, embedded)
         }
+        SettingsSection.Swipe -> {
+            val state by app.model.state.collectAsState()
+            SwipeSettingsScreen(state.swipe, actions, onBack, embedded)
+        }
         SettingsSection.Playback -> {
             val state by app.model.state.collectAsState()
             PlaybackSettingsScreen(state, actions, onBack, embedded, onOpen)

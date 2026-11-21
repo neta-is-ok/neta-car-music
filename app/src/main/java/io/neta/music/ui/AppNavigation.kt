@@ -57,6 +57,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -88,9 +89,11 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlin.coroutines.cancellation.CancellationException
+import io.neta.music.data.Song
 import io.neta.music.data.TopList
 import io.neta.music.playback.PlaybackService
 import io.neta.music.ui.adaptive.BottomPlayerBar
+import io.neta.music.ui.player.rememberScreenReaderOn
 import io.neta.music.ui.adaptive.BottomPlayerBarHeight
 import io.neta.music.ui.adaptive.HomeTopBar
 import io.neta.music.ui.adaptive.PhoneMiniPlayerBar
@@ -174,6 +177,31 @@ fun MyMusicApp(model: MusicViewModel) {
     var selectedTab by rememberSaveable { mutableStateOf(startupTab.route) }
     var queueOpen by rememberSaveable { mutableStateOf(false) }
     var timerOpen by rememberSaveable { mutableStateOf(false) }
+    // 列表左右滑：收藏 / 下载状态包成 State 交给滑开的那一行自己读，平时列表不跟着下载进度重组
+    val swipeDownloads = model.downloads.collectAsState()
+    val swipePrefs = rememberUpdatedState(state.swipe)
+    val swipeScreenReader = rememberUpdatedState(rememberScreenReaderOn())
+    var swipePlaylistSong by remember { mutableStateOf<Song?>(null) }
+    val swipeEnv = remember(actions) {
+        io.neta.music.ui.components.SongSwipeEnv(
+            actions = actions,
+            prefs = swipePrefs,
+            favorites = derivedStateOf { favorites.associateBy { it.key } },
+            downloads = derivedStateOf { swipeDownloads.value.associate { it.key to it.state } },
+            screenReader = swipeScreenReader,
+            openAddToPlaylist = { swipePlaylistSong = it },
+            coordinator = io.neta.music.ui.components.SwipeCoordinator(),
+        )
+    }
+    val swipeScope = rememberCoroutineScope()
+    val swipeNotifier = remember(snackbar, swipeScope) {
+        io.neta.music.ui.components.SwipeNotifier { message, undo ->
+            swipeScope.launch {
+                val result = if (undo == null) snackbar.showSnackbar(message) else snackbar.showSnackbar(message, actionLabel = "撤销")
+                if (undo != null && result == SnackbarResult.ActionPerformed) undo()
+            }
+        }
+    }
     var remoteOpen by rememberSaveable { mutableStateOf(false) }
     // 主界面闲置计时用的交互刻度：任何触摸、回到前台都会加一（见下方的闲置计时 effect）
     val interaction = remember { mutableStateOf(0) }
@@ -384,6 +412,9 @@ fun MyMusicApp(model: MusicViewModel) {
     CompositionLocalProvider(
         LocalAppWindow provides window,
         LocalAppSnackbar provides snackbar,
+        // 电视不滑：不给环境，整套滑动代码不进组合
+        io.neta.music.ui.components.LocalSongSwipeEnv provides if (window.isTv) null else swipeEnv,
+        io.neta.music.ui.components.LocalSwipeNotifier provides swipeNotifier,
         LocalPageChromeScheme provides pageChrome,
     ) {
         // 共享元素：手机上正在播放的封面从迷你播放器飞到播放页。
@@ -601,6 +632,9 @@ fun MyMusicApp(model: MusicViewModel) {
             actions = actions,
             progress = { updateProgress.value.progress },
         )
+        swipePlaylistSong?.let { song ->
+            AddToPlaylistSheet(song = song, providers = state.providers, actions = actions, onDismiss = { swipePlaylistSong = null })
+        }
         // 从文件导入的预览：从哪一页导入都盖在上面
         val transfer by model.transfer.collectAsState()
         if (transfer !is TransferUi.Idle) {

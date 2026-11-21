@@ -76,6 +76,17 @@ import io.neta.music.playback.SleepTimerState
 import io.neta.music.data.LyricTextPrefs
 import io.neta.music.ui.LyricPipeline
 import io.neta.music.ui.withSubline
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import io.neta.music.ui.player.share.LocalLyricPickProbe
+import io.neta.music.ui.player.share.LyricPickProbe
+import io.neta.music.ui.player.share.ShareOverlay
+import io.neta.music.ui.player.share.ShareSession
+import io.neta.music.ui.player.share.initialPick
+import io.neta.music.ui.player.share.pickLines
+import io.neta.music.ui.player.share.shareLink
+import io.neta.music.ui.theme.LocalSeedColor
 import io.neta.music.ui.player.stage.AnimationSheet
 import io.neta.music.ui.player.stage.StageBinding
 import io.neta.music.ui.player.stage.pick
@@ -122,6 +133,12 @@ fun PlayerScreen(
     val song = state.current ?: return
     val window = LocalAppWindow.current
     var lyricsMode by rememberSaveable { mutableStateOf(false) }
+    // 歌词分享：全屏歌词长按任意一句进选句层，再进分享页；会话是长按那一刻的快照。电视不做分享
+    val shareAllowed = !window.isTv
+    var share by remember { mutableStateOf<ShareSession?>(null) }
+    val pickProbe = remember { LyricPickProbe() }
+    val haptics = LocalHapticFeedback.current
+    val seedColor = LocalSeedColor.current
     // 桌面歌词组件点进来：直接进歌词视图
     LaunchedEffect(lyricsRequest) {
         if (!lyricsRequest) return@LaunchedEffect
@@ -189,6 +206,24 @@ fun PlayerScreen(
     val active = remember(lyrics, position) {
         derivedStateOf {
             if (lyrics.synced) LyricsParser.activeLineIndex(lyrics.lines, position.value) else -1
+        }
+    }
+    androidx.compose.runtime.SideEffect {
+        pickProbe.enabled = shareAllowed && share == null && !lyricsLoading && lyrics.raw.isNotBlank() && lyricsMode
+        pickProbe.onRequest = { hit ->
+            val lines = pickLines(lyrics.displayLines())
+            if (lines.isNotEmpty()) {
+                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                share = ShareSession(
+                    song = song,
+                    link = shareLink(song, state.currentTrack),
+                    lines = lines,
+                    synced = lyrics.synced,
+                    seed = seedColor,
+                    initial = initialPick(lines, hit, active.value),
+                )
+                idle.sleep()
+            }
         }
     }
 
@@ -263,6 +298,7 @@ fun PlayerScreen(
                 else -> BackdropScrim.Phone
             },
         )
+        CompositionLocalProvider(LocalLyricPickProbe provides pickProbe.takeIf { shareAllowed }) {
         when {
             window.isTv -> TvPlayer(
                 song = song,
@@ -379,6 +415,18 @@ fun PlayerScreen(
                 pulse = pulse,
                 coverShape = state.coverShape,
                 transitionAnimation = state.crossfadeAnimation,
+            )
+        }
+        }
+        // 歌词分享覆盖层：选句、样式、导出都在里面；关掉回到播放页
+        share?.let { session ->
+            ShareOverlay(
+                session = session,
+                state = state,
+                actions = actions,
+                active = active,
+                currentKey = song.key,
+                onClose = { share = null },
             )
         }
         HeartBurst(burst, heartBurstPlacement(window.fold, book, tabletop))

@@ -109,6 +109,8 @@ import io.neta.music.ui.InfoNote
 import io.neta.music.ui.TrackActionsSheet
 import io.neta.music.ui.components.AdaptiveSheet
 import io.neta.music.ui.components.AppLoading
+import io.neta.music.ui.components.SwipeDelete
+import io.neta.music.ui.components.rememberRowSwipe
 import io.neta.music.ui.components.IconTone
 import io.neta.music.ui.components.ListRow
 import io.neta.music.ui.components.LocalAppWindow
@@ -349,6 +351,13 @@ fun LocalPlaylistScreen(
                 val shown = localDisplay(song)
                 val local = localCopies(song)
                 SongRow(
+                    // 「删除」= 从歌单移出（绑定歌单照写回规则同步到平台，撤销按原位置插回）；收藏来的只读歌单没有
+                    swipe = rememberRowSwipe(
+                        song,
+                        songs,
+                        delete = if (readOnly || picking) null else SwipeDelete("移出", "从歌单移出") { remove(entry, song) },
+                        enabled = !picking,
+                    ),
                     title = shown.title,
                     subtitle = localSubtitle(shown, local),
                     cover = shown.cover,

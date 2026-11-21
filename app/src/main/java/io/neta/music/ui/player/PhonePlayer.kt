@@ -1,5 +1,8 @@
 package io.neta.music.ui.player
 
+import io.neta.music.ui.player.share.LocalLyricPickProbe
+import io.neta.music.ui.player.share.lyricPickGesture
+
 import io.neta.music.ui.theme.LyricsTextScope
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
@@ -610,7 +613,8 @@ private fun PhoneLyricsPage(
                     prefs = stage.prefs,
                     textSp = PHONE_STAGE_SP,
                     insets = insets,
-                    modifier = Modifier.fillMaxSize(),
+                    // 长按任意一句进选句层（歌词分享）；经典列表也是舞台画的，一处管全部模式
+                    modifier = Modifier.fillMaxSize().lyricPickGesture(LocalLyricPickProbe.current),
                     seek = actions::seek,
                 ) { modifier ->
                     LyricsList(

@@ -120,7 +120,11 @@ data class LyricStagePrefs(
     val pins: Map<String, String> = emptyMap(),
     /** 首次进入全屏歌词页时 ✦ 外面的呼吸提示，打开过一次面板就不再显示。 */
     val hintSeen: Boolean = false,
+    /** 取色面板“最近用过”：`#RRGGBB`，新的在前，最多 [RECENT_COLORS_LIMIT] 个。 */
+    val recentColors: List<String> = emptyList(),
 )
+
+const val RECENT_COLORS_LIMIT = 8
 
 /** 每首歌记下的随机结果和速度（最近 [LYRIC_MEMORY_LIMIT] 首）。 */
 @Serializable
@@ -255,6 +259,7 @@ class SettingsStore(private val context: Context) {
     private val lyricSpectrumKey = booleanPreferencesKey("lyric_spectrum")
     private val lyricSublineKey = stringPreferencesKey("lyric_subline")
     private val lyricHintSeenKey = booleanPreferencesKey("lyric_visualizer_hint_seen")
+    private val lyricRecentColorsKey = stringPreferencesKey("lyric_recent_colors")
     private val lyricSplitBilingualKey = booleanPreferencesKey("lyric_split_bilingual")
     private val lyricTraditionalKey = booleanPreferencesKey("lyric_traditional")
     private val lyricAutoRomanizeKey = booleanPreferencesKey("lyric_auto_romanize")
@@ -311,6 +316,8 @@ class SettingsStore(private val context: Context) {
             miniPlayerTarget = values[miniPlayerTargetKey].toMiniPlayerTarget(),
             playReportEnabled = values[playReportEnabledKey] ?: true,
             sodaReportDeviceId = values[sodaReportDeviceIdKey] ?: "",
+            swipe = SwipePrefsCodec.read(values),
+            share = SharePrefsCodec.read(values),
             lyricStage = lyricStagePrefs(values),
             lyricText = LyricTextPrefs(
                 splitBilingual = values[lyricSplitBilingualKey] ?: false,
@@ -456,9 +463,21 @@ class SettingsStore(private val context: Context) {
         pins = runCatching { json.decodeFromString<Map<String, String>>(values[lyricVisualizerPinsKey] ?: "{}") }
             .getOrDefault(emptyMap()),
         hintSeen = values[lyricHintSeenKey] ?: false,
+        recentColors = runCatching { json.decodeFromString<List<String>>(values[lyricRecentColorsKey] ?: "[]") }
+            .getOrDefault(emptyList()),
     )
 
     /** 全屏歌词动画的设置：同一次 edit 里读出当前值再写回，连着改几项不会互相覆盖。 */
+    /** 列表左右滑的操作偏好：只在本机，不进同步。 */
+    suspend fun swipe(transform: (SwipePrefs) -> SwipePrefs) = context.dataStore.edit {
+        SwipePrefsCodec.write(it, transform(SwipePrefsCodec.read(it)))
+    }
+
+    /** 歌词分享页的选项：只在本机，不进同步。 */
+    suspend fun share(transform: (SharePrefs) -> SharePrefs) = context.dataStore.edit {
+        SharePrefsCodec.write(it, transform(SharePrefsCodec.read(it)))
+    }
+
     suspend fun lyricStage(transform: (LyricStagePrefs) -> LyricStagePrefs) = context.dataStore.edit {
         val value = transform(lyricStagePrefs(it))
         it[lyricVisualizerKey] = value.visualizer
@@ -469,6 +488,7 @@ class SettingsStore(private val context: Context) {
         it[lyricPluginSettingsKey] = json.encodeToString(value.pluginSettings)
         it[lyricVisualizerPinsKey] = json.encodeToString(value.pins)
         it[lyricHintSeenKey] = value.hintSeen
+        it[lyricRecentColorsKey] = json.encodeToString(value.recentColors.take(RECENT_COLORS_LIMIT))
     }
 
     suspend fun lyricText(transform: (LyricTextPrefs) -> LyricTextPrefs) = context.dataStore.edit {
@@ -699,6 +719,10 @@ data class AppSettings(
     val playReportEnabled: Boolean = true,
     /** 汽水上报用的设备标识，空表示还没生成过（见 SettingsStore.sodaReportDeviceId）。 */
     val sodaReportDeviceId: String = "",
+    /** 列表左右滑的操作偏好。 */
+    val swipe: SwipePrefs = SwipePrefs(),
+    /** 歌词分享页的选项：只在本机，不进同步。 */
+    val share: SharePrefs = SharePrefs(),
     /** 全屏歌词动画。 */
     val lyricStage: LyricStagePrefs = LyricStagePrefs(),
     /** 歌词文字变换（拆单行双语、简转繁、补罗马音）。 */

@@ -202,6 +202,17 @@ class MusicActions(private val model: MusicViewModel) {
     /** 收藏到平台账号（汽水的「我喜欢的音乐」）；平台没实现或没登录时由界面提示。 */
     fun collectOnPlatform(song: Song) = model.collectOnPlatform(song)
     fun download(song: Song) = model.download(song)
+
+    val localPlaylists: kotlinx.coroutines.flow.StateFlow<List<LocalPlaylistSummary>> get() = model.localPlaylists
+    val favorites: kotlinx.coroutines.flow.StateFlow<List<io.neta.music.data.SavedSong>> get() = model.favorites
+    val transfer: kotlinx.coroutines.flow.StateFlow<TransferUi> get() = model.transfer
+    suspend fun exportPreview(ids: List<String>) = model.exportPreview(ids)
+    suspend fun exportFile(preview: io.neta.music.data.transfer.ExportPreview) = model.exportFile(preview)
+    fun applyImport(choices: Map<String, io.neta.music.data.transfer.ImportChoice>) = model.applyImport(choices)
+    fun recheckImport() = model.recheckImport()
+    fun dismissImport() = model.dismissImport()
+    fun shareExport(preview: io.neta.music.data.transfer.ExportPreview) = model.shareExport(preview)
+    fun saveExport(preview: io.neta.music.data.transfer.ExportPreview, uri: android.net.Uri) = model.saveExport(preview, uri)
     fun openDeepLink() = model.openDeepLink()
     fun clearError() = model.clearError()
     fun clearNotice() = model.clearNotice()

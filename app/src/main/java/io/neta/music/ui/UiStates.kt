@@ -190,3 +190,15 @@ sealed interface UiEvent {
 }
 
 data class LinkPreview(val link: Boolean, val text: String)
+
+/** 从歌单文件导入的进度；外壳按它挂导入预览面板。 */
+sealed interface TransferUi {
+    data object Idle : TransferUi
+
+    /** 读文件、本地匹配、咪咕换取；[step] 是面板上的进度文字。 */
+    data class Reading(val fileName: String, val step: String, val fromPhone: Boolean = false) : TransferUi
+
+    data class Preview(val plan: io.neta.music.data.transfer.ImportPlan) : TransferUi
+
+    data class Applying(val plan: io.neta.music.data.transfer.ImportPlan) : TransferUi
+}

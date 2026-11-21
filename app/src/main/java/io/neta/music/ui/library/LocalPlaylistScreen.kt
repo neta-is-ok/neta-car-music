@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.SaveAlt
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.LinkOff
@@ -200,6 +201,7 @@ fun LocalPlaylistScreen(
     }
     var nameDraft by rememberSaveable(playlistId, playlist?.name) { mutableStateOf(playlist?.name.orEmpty()) }
     var renameOpen by remember { mutableStateOf(false) }
+    var exportOpen by remember { mutableStateOf(false) }
     var deleteOpen by remember { mutableStateOf(false) }
     var addOpen by remember { mutableStateOf(false) }
     var actionEntry by remember { mutableStateOf<Pair<Song, PlaylistEntryEntity>?>(null) }
@@ -281,6 +283,7 @@ fun LocalPlaylistScreen(
         onEdit = if (readOnly) null else ({ editing = true }),
         onRename = { renameOpen = true },
         onDelete = { deleteOpen = true },
+        onExport = { exportOpen = true },
         onSync = if (bound) ({ actions.syncBoundPlaylist(playlistId) }) else null,
         onUnbind = if (bound) ({ actions.unbindPlaylist(playlistId) }) else null,
     )
@@ -712,6 +715,9 @@ fun LocalPlaylistScreen(
             },
         )
     }
+    if (exportOpen && playlist != null) {
+        ExportSheet(listOf(playlistId), actions, onDismiss = { exportOpen = false })
+    }
     if (renameOpen && playlist != null) {
         InputDialog(
             title = "重命名歌单",
@@ -742,6 +748,9 @@ private data class PlaylistMenu(
     val onEdit: (() -> Unit)?,
     val onRename: () -> Unit,
     val onDelete: () -> Unit,
+    /** 导出成本应用歌单文件（分享 / 保存）。 */
+    val onExport: () -> Unit,
+
     /** 绑定平台歌单的专属操作；未绑定为 null 不显示。 */
     val onSync: (() -> Unit)? = null,
     val onUnbind: (() -> Unit)? = null,
@@ -953,6 +962,11 @@ private fun PlaylistMoreMenu(menu: PlaylistMenu) {
                 text = { Text("重命名") },
                 leadingIcon = { Icon(Icons.Filled.Edit, null) },
                 onClick = { open = false; menu.onRename() },
+            )
+            DropdownMenuItem(
+                text = { Text("导出歌单…") },
+                leadingIcon = { Icon(Icons.Filled.SaveAlt, null) },
+                onClick = { open = false; menu.onExport() },
             )
             DropdownMenuItem(
                 text = { Text("删除歌单", color = MaterialTheme.colorScheme.error) },

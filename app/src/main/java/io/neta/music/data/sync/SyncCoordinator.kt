@@ -1172,6 +1172,17 @@ class SyncCoordinator(
         val raw = context.contentResolver.openInputStream(uri)?.use { input ->
             input.readBytes().toString(Charsets.UTF_8)
         } ?: error("无法读取所选文件")
+        importText(raw, strategy)
+    } catch (error: SyncException) {
+        emit(error.message, error = true)
+        false
+    } catch (error: Exception) {
+        emit(error.message ?: "导入失败", error = true)
+        false
+    }
+
+    /** 整库备份从字符串导入；歌单文件导入分流时也走这里合并整库备份。 */
+    suspend fun importText(raw: String, strategy: SyncStrategy = SyncStrategy.Merge): Boolean = try {
         val remote = SyncJson.decode(raw)
         if (strategy == SyncStrategy.Remote && !ensureBackup()) return false
         val local = localSnapshot()

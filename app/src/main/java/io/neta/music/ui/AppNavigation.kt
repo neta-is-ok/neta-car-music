@@ -601,6 +601,11 @@ fun MyMusicApp(model: MusicViewModel) {
             actions = actions,
             progress = { updateProgress.value.progress },
         )
+        // 从文件导入的预览：从哪一页导入都盖在上面
+        val transfer by model.transfer.collectAsState()
+        if (transfer !is TransferUi.Idle) {
+            io.neta.music.ui.library.ImportPreviewSheet(transfer, actions)
+        }
     }
 }
 

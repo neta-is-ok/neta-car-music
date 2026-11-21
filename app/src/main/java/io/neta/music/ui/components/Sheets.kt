@@ -25,6 +25,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -56,6 +58,11 @@ import io.neta.music.ui.adaptive.rememberDialogFoldSplit
 import kotlin.coroutines.cancellation.CancellationException
 
 /**
+ * 面板内容自己关面板（不经确认拦截）：面板内按钮拿到关闭回调。
+ */
+val LocalSheetClose = staticCompositionLocalOf<() -> Unit> { {} }
+
+/**
  * 自适应面板：手机是底部面板；平板是右侧 400dp 的浮动侧边面板（后面的内容仍可见），
  * 折叠屏书本姿态只占右页、双屏横跨上下两块时只放上屏；电视是贴右边、整高 360dp 的面板，返回键关闭。
  */
@@ -76,7 +83,7 @@ fun AdaptiveSheet(
         ) {
             Column(Modifier.fillMaxWidth().padding(bottom = 16.dp)) {
                 SheetHeader(title, subtitle, subtitleProvider, null)
-                content()
+                CompositionLocalProvider(LocalSheetClose provides onDismiss) { content() }
             }
         }
         return
@@ -144,7 +151,7 @@ fun AdaptiveSheet(
                 ) {
                     Column(Modifier.fillMaxSize().padding(top = if (tv) 36.dp else 16.dp, bottom = 16.dp)) {
                         SheetHeader(title, subtitle, subtitleProvider, if (tv) null else onDismiss)
-                        content()
+                        CompositionLocalProvider(LocalSheetClose provides onDismiss) { content() }
                     }
                 }
             }

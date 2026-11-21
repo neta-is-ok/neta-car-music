@@ -373,7 +373,7 @@ fun MyMusicApp(model: MusicViewModel) {
     val imeOpen by rememberUpdatedState(WindowInsets.ime.getBottom(density) > 0)
     val autoLyricsGate by rememberUpdatedState(
         !covered && !queueOpen && !timerOpen && !remoteOpen &&
-            state.current != null && !window.isTv &&
+            state.current != null && !window.isTv && !settingsLikeRoute(route) &&
             lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
     )
     LaunchedEffect(model) {
@@ -395,7 +395,7 @@ fun MyMusicApp(model: MusicViewModel) {
             val currentRoute = backStack?.destination?.route
             val armable = state.autoLyricsIdle && !state.playerOpen && !state.posterOpen &&
                 state.current != null && state.playing && !queueOpen && !timerOpen && !remoteOpen &&
-                !window.isTv && currentRoute != null && !imeOpen
+                !window.isTv && currentRoute != null && !imeOpen && !settingsLikeRoute(currentRoute)
             // 时长设置也在流里：改了时长倒计时跟着重来
             Triple(armable, state.autoLyricsIdleSeconds to interaction.value, currentRoute)
         }.collectLatest { (armable, watched, _) ->
@@ -676,6 +676,14 @@ fun TvExitBackHandler() {
 /** 设置子页归到设置 Tab，其余详情由返回栈中的顶层入口确定。 */
 /** 详情页（榜单 / 歌单 / 专辑 / 歌手）的路由前缀，参数是 Uri 编码过的页面 key。 */
 internal const val COLLECTION_ROUTE = "collection"
+
+/**
+ * 设置页、音乐库同步页（含 WebDAV 等同步位置的连接页）和本地音乐的 WebDAV 页：
+ * 用户可能在填地址密码、看同步进度，起播和闲置计时都不在这几处自动进播放页，免得输入被打断。
+ */
+private fun settingsLikeRoute(route: String?): Boolean =
+    route == "settings" || route?.startsWith("settings/") == true ||
+        route?.startsWith("syncConnect") == true || route == "localMusic/webdav"
 
 /**
  * 压一层详情页。栈顶已经是同一页（连点两下）就不再压；不用 launchSingleTop——

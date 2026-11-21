@@ -117,7 +117,8 @@ def prepare(notes_path):
         "io.neta.music", name, code, apk_name,
     ):
         raise ValueError("APK 包名或版本与本次发布不一致")
-    signature = command(str(Path(sdk) / "build-tools" / build_tools / "apksigner"),
+    apksigner = Path(sdk) / "build-tools" / build_tools / ("apksigner.bat" if os.name == "nt" else "apksigner")
+    signature = command(str(apksigner),
                         "verify", "--print-certs", str(output / apk_name))
     if "CN=Android Debug" in signature:
         raise ValueError("不能发布 debug 签名 APK")

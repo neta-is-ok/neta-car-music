@@ -17,6 +17,10 @@ from datetime import datetime, timezone
 ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY = "neta-is-ok/neta-car-music"
 
+# GBK 控制台编码不了证书 DN 里的个别字符（如 \u07f8）：换字节显示成 ? 就行，别让 print 中断发布
+for stream in (sys.stdout, sys.stderr):
+    stream.reconfigure(errors="replace")
+
 
 GRADLEW = "gradlew.bat" if os.name == "nt" else "./gradlew"
 

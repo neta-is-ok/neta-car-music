@@ -1745,8 +1745,13 @@ class SyncCoordinator(
 internal fun shouldPullOnScreen(lastSyncedAt: Long, now: Long): Boolean =
     now - lastSyncedAt >= SyncCoordinator.SCREEN_PULL_STALE_MS
 
-/** revision 是首选依据；服务端没给 revision 时退回比较时间戳和内容。 */
+/**
+ * 内容一致就是没变，revision 只是内容拿不到时的辅助。不少 WebDAV 服务器每次请求给的 ETag
+ * 都不一样（弱 ETag、PUT 和 GET 写法不同、按请求现生成），只比 revision 会把没变的文件
+ * 当成一直在变，每轮重合并到上限就报“云端文件持续变化”。防覆盖不靠这里：上传仍带 If-Match。
+ */
 internal fun remoteMatches(current: RemoteFile, other: RemoteFile): Boolean {
+    if (current.content == other.content) return true
     if (current.revision.isNotBlank() && other.revision.isNotBlank()) return current.revision == other.revision
-    return current.updatedAt == other.updatedAt && current.content == other.content
+    return false
 }

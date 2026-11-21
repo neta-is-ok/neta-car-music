@@ -78,7 +78,7 @@ class SodaProvider : BaseNativeProvider(SODA_INFO) {
     private val availableQualityCache = java.util.concurrent.ConcurrentHashMap<String, List<AudioQualityOption>>()
 
     override suspend fun searchSongs(cookie: String, keyword: String): List<Song> {
-        val body = fetchAndroidSearch(cookie, "track", keyword, 1, ANDROID_SEARCH_PAGE_SIZE)
+        val body = fetchSearchBody(cookie, "track", keyword, 1, ANDROID_SEARCH_PAGE_SIZE)
         val resp = decodeSodaJson<SodaSearchResponse>(body, "soda search json parse error")
         val songs = mutableListOf<Song>()
         val seen = mutableSetOf<String>()
@@ -313,7 +313,7 @@ class SodaProvider : BaseNativeProvider(SODA_INFO) {
     }
 
     override suspend fun searchPlaylists(cookie: String, keyword: String): List<Playlist> {
-        val body = fetchAndroidSearch(cookie, "playlist", keyword, 1, ANDROID_SEARCH_PAGE_SIZE)
+        val body = fetchSearchBody(cookie, "playlist", keyword, 1, ANDROID_SEARCH_PAGE_SIZE)
         val resp = decodeSodaJson<SodaSearchResponse>(body, "soda playlist json parse error")
         val playlists = mutableListOf<Playlist>()
         resp.resultGroups.forEach { group ->
@@ -347,7 +347,7 @@ class SodaProvider : BaseNativeProvider(SODA_INFO) {
     }
 
     override suspend fun searchAlbums(cookie: String, keyword: String): List<Playlist> {
-        val body = fetchAndroidSearch(cookie, "album", keyword, 1, ANDROID_SEARCH_PAGE_SIZE)
+        val body = fetchSearchBody(cookie, "album", keyword, 1, ANDROID_SEARCH_PAGE_SIZE)
         val resp = decodeSodaJson<SodaSearchResponse>(body, "soda album search json parse error")
         val albums = mutableListOf<Playlist>()
         resp.resultGroups.forEach { group ->
@@ -373,7 +373,7 @@ class SodaProvider : BaseNativeProvider(SODA_INFO) {
     }
 
     override suspend fun searchArtists(cookie: String, keyword: String): List<Playlist> {
-        val body = fetchAndroidSearch(cookie, "artist", keyword, 1, ANDROID_SEARCH_PAGE_SIZE)
+        val body = fetchSearchBody(cookie, "artist", keyword, 1, ANDROID_SEARCH_PAGE_SIZE)
         val resp = decodeSodaJson<SodaSearchResponse>(body, "soda artist search json parse error")
         val artists = mutableListOf<Playlist>()
         resp.resultGroups.forEach { group ->
@@ -612,6 +612,105 @@ class SodaProvider : BaseNativeProvider(SODA_INFO) {
     internal suspend fun userId(cookie: String): String {
         if (cookie.isBlank()) return ""
         return runCatching { fetchPcMe(cookie).myInfo.id.trim() }.getOrNull().orEmpty()
+    }
+
+    /**
+     * 搜索回包。2026-11 起 Android `/luna/search/all` 对未签名请求只回
+     * `{"extra":{"empty_search":1}}`（或空 body），PC 端 `/luna/pc/search/all`
+     * 带应用签名才返回完整 result_groups。所以配了签名器就走 PC 综合搜索，
+     * 没配时保留原来的 Android 分类接口——不能把未签名的综合请求当成「没有结果」。
+     * 对齐 libresoda `search.rs` 的 `fetch_search_body`。
+     */
+    private suspend fun fetchSearchBody(
+        cookie: String,
+        searchType: String,
+        keyword: String,
+        page: Int,
+        pageSize: Int,
+    ): String = if (isSignerConfigured()) {
+        fetchPcSearchAll(cookie, keyword, page, pageSize, searchType)
+    } else {
+        fetchAndroidSearch(cookie, searchType, keyword, page, pageSize)
+    }
+
+    /**
+     * PC 综合搜索（`GET /luna/pc/search/all`），逐请求应用级签名。
+     * 签名头没被接受（200 + 空 body / `empty_search`）时退回 Android 分类接口：
+     * 它至少还能给出已收录的结果，比「搜不到」更接近真相。
+     */
+    private suspend fun fetchPcSearchAll(
+        cookie: String,
+        keyword: String,
+        page: Int,
+        pageSize: Int,
+        fallbackType: String,
+    ): String {
+        val safePage = if (page < 1) 1 else page
+        val safePageSize = if (pageSize <= 0) ANDROID_SEARCH_PAGE_SIZE else pageSize
+        val creds = ensureSignerCredentials()
+        val params = pcAppParams()
+        params["device_id"] = creds.deviceId
+        params["iid"] = creds.iid
+        params["fp"] = creds.fp
+        // PC 综合搜索按 3.7.0 的客户端指纹校验，和其余 PC 接口的 3.3.0 不是同一套
+        params["version_name"] = PC_SEARCH_VERSION_NAME
+        params["version_code"] = PC_SEARCH_VERSION_CODE
+        params["q"] = keyword
+        params["cursor"] = ((safePage - 1) * safePageSize).toString()
+        params["search_id"] = java.util.UUID.randomUUID().toString()
+        params["search_method"] = "input"
+        params["debug_params"] = ""
+        params["from_search_id"] = ""
+        params["search_scene"] = ""
+        params["_rticket"] = System.currentTimeMillis().toString()
+        val requestUrl = "https://api.qishui.com/luna/pc/search/all?${buildQuery(params)}"
+        val headers = linkedMapOf(
+            "User-Agent" to PC_SEARCH_USER_AGENT,
+            "Accept" to "application/json",
+            "Accept-Encoding" to "identity",
+            "x-luna-background-type" to "foreground",
+            "x-luna-is-background-req" to "0",
+            "x-luna-is-local-user" to "0",
+        )
+        // 空字符串的 Cookie 头会让签名服务 500（“只拿到 0 个头”），未登录时不带
+        if (cookie.isNotBlank()) headers["Cookie"] = cookie
+        val signed = signRequest(requestUrl, "", headers, "GET")
+        signed.headers.forEach { (key, value) -> headers[key] = value }
+        val response = NativeHttp.getResponse(
+            signed.url,
+            headers,
+            cookie = cookie,
+            userAgent = PC_SEARCH_USER_AGENT,
+        )
+        val body = response.body
+        if (body.isBlank() || body.contains("empty_search")) {
+            AppLog.w(
+                TAG,
+                "pc search/all 无结果 HTTP=${response.code} body=${body.length}B，退回 Android 搜索接口",
+            )
+            return fetchAndroidSearch(cookie, fallbackType, keyword, page, pageSize)
+        }
+        return body
+    }
+
+    override val supportsSearchPagination: Boolean = true
+
+    /** 分页搜索：[limit] 是每页条数，页码从 1 开始。 */
+    override suspend fun searchSongsPage(cookie: String, keyword: String, page: Int, limit: Int): SongSearchPage {
+        val safePage = page.coerceAtLeast(1)
+        val safeLimit = limit.coerceIn(1, 50)
+        val body = fetchSearchBody(cookie, "track", keyword, safePage, safeLimit)
+        val resp = decodeSodaJson<SodaSearchResponse>(body, "soda search json parse error")
+        val songs = mutableListOf<Song>()
+        val seen = mutableSetOf<String>()
+        resp.resultGroups.forEach { group ->
+            group.data.forEach { item ->
+                val track = item.entity.track
+                if (track.id.isEmpty() || !seen.add(track.id)) return@forEach
+                songs += buildSongFromTrack(track)
+            }
+        }
+        return SongSearchPage(songs, safePage, songs.size >= safeLimit)
     }
 
     private suspend fun fetchAndroidSearch(
@@ -1168,18 +1267,20 @@ class SodaProvider : BaseNativeProvider(SODA_INFO) {
 
     /**
      * 请求签名服务换 x-helios / x-medusa。签名覆盖 URL + 全部请求头 + body 字节，
-     * 所以传给签名器的必须是即将原样发出的那一份。
+     * 所以传给签名器的必须是即将原样发出的那一份。[method] 只有 GET / POST 两种用法：
+     * 读接口是 GET（body 空），写接口是 POST。
      */
     private suspend fun signRequest(
         requestUrl: String,
         body: String,
         headers: Map<String, String>,
+        method: String = "POST",
     ): SignedRequest {
         val endpoint = effectiveSignerUrl()
         if (endpoint.isEmpty()) throw IllegalStateException(VIP_SIGNER_REQUIRED_MESSAGE)
         val payload = buildJsonObject {
             put("url", requestUrl)
-            put("method", "POST")
+            put("method", method)
             put("body", body)
             put("ts_ms", System.currentTimeMillis())
             putJsonObject("headers") {
@@ -3208,6 +3309,10 @@ class SodaProvider : BaseNativeProvider(SODA_INFO) {
         const val SODA_USER_AGENT =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
         const val PC_APP_USER_AGENT = "LunaPC/3.3.0(359450208)"
+        /** PC 综合搜索按 3.7.0 的指纹校验，和其余 PC 接口的 3.3.0 不是同一套。 */
+        const val PC_SEARCH_USER_AGENT = "LunaPC/3.7.0(452316191)"
+        const val PC_SEARCH_VERSION_NAME = "3.7.0"
+        const val PC_SEARCH_VERSION_CODE = "30070000"
         const val ANDROID_SEARCH_USER_AGENT =
             "com.luna.music/100198030 (Linux; U; Android 15; zh_CN_#Hans; ABR-AL80; Build/V417IR;tt-ok/3.12.13.19)"
         const val ANDROID_API_BASE = "https://api.qishui.com/luna"

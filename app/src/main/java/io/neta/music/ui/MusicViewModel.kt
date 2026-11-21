@@ -6783,6 +6783,23 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         "吒友爱听 ${info.versionName} ($code)"
     }.getOrDefault("吒友爱听")
 
+    /** 「扫码下载到手机」：写好导出文件并确保远控服务在跑，返回文件与扫码地址；拿不到局域网地址返回 null。 */
+    suspend fun prepareQrExport(preview: io.neta.music.data.transfer.ExportPreview): Pair<io.neta.music.data.transfer.ExportFile, String>? =
+        withContext(Dispatchers.IO) {
+            val file = exportFile(preview)
+            val context = getApplication<Application>()
+            val dir = java.io.File(context.cacheDir, "exports")
+            dir.mkdirs()
+            java.io.File(dir, file.fileName).writeBytes(file.bytes)
+            val manager = app.remoteControl
+            if (!manager.state.value.running) {
+                manager.start()
+                withTimeoutOrNull(5_000) { manager.state.first { it.running } } ?: return@withContext null
+            }
+            val base = manager.address() ?: return@withContext null
+            file to "$base/transfer/${android.net.Uri.encode(file.fileName)}"
+        }
+
     /** 「分享」：导出文件写进缓存目录，再交系统分享面板。 */
     fun shareExport(preview: io.neta.music.data.transfer.ExportPreview) {
         viewModelScope.launch {

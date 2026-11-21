@@ -39,9 +39,11 @@ import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.SaveAlt
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Button
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -116,6 +118,7 @@ import io.neta.music.ui.components.LocalSheetClose
 import io.neta.music.ui.components.ProviderIcon
 import io.neta.music.ui.components.SectionLabel
 import io.neta.music.ui.components.segmentShape
+import io.neta.music.ui.settings.QrCodeImage
 import io.neta.music.ui.components.tvFocusRing
 import io.neta.music.ui.providerName
 import kotlinx.coroutines.CancellationException
@@ -143,11 +146,12 @@ internal fun ExportSheet(ids: List<String>?, actions: MusicActions, onDismiss: (
         if (current != null) value = actions.exportPreview(current)
     }
     val loaded = preview?.takeIf { current != null }
-    // 「保存到文件」没有系统文件选择器（电视）：同一个面板换成扫码下载
-    val tv = LocalAppWindow.current.isTv
+    // 「扫码下载到手机」：文件写好、远控服务就绪后的扫码地址
+    var qr by remember { mutableStateOf<Pair<ExportFile, String>?>(null) }
     AdaptiveSheet(
         onDismiss = onDismiss,
         title = when {
+            qr != null -> "扫码下载到手机"
             current == null -> "导出歌单"
             loaded == null -> "导出歌单"
             loaded.lists.size == 1 -> "导出「${loaded.title}」"
@@ -158,7 +162,10 @@ internal fun ExportSheet(ids: List<String>?, actions: MusicActions, onDismiss: (
             else -> "歌单文件 · 不包含平台账号和 Cookie"
         },
     ) {
-        if (current == null) {
+        val scan = qr
+        if (scan != null) {
+            FileQrBody(scan.first, scan.second)
+        } else if (current == null) {
             ExportPickStep(
                 actions = actions,
                 selection = selection,
@@ -172,6 +179,7 @@ internal fun ExportSheet(ids: List<String>?, actions: MusicActions, onDismiss: (
                 preview = loaded,
                 actions = actions,
                 onBack = if (fromPicker) ({ picked = null }) else null,
+                onQr = { url -> qr = url },
             )
         }
     }
@@ -264,6 +272,7 @@ private fun ColumnScope.ExportConfirmStep(
     preview: ExportPreview?,
     actions: MusicActions,
     onBack: (() -> Unit)?,
+    onQr: (Pair<ExportFile, String>) -> Unit,
 ) {
     val context = LocalContext.current
     val tv = LocalAppWindow.current.isTv
@@ -272,6 +281,7 @@ private fun ColumnScope.ExportConfirmStep(
     val canShare = remember(context) { hasRealActivity(context, Intent(Intent.ACTION_SEND).setType(PLAYLIST_FILE_MIME)) }
     val canSave = remember(context) { hasRealActivity(context, Intent(Intent.ACTION_CREATE_DOCUMENT).setType(PLAYLIST_FILE_MIME)) }
     var exportError by remember { mutableStateOf("") }
+    val scope = rememberCoroutineScope()
     val saveLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument(PLAYLIST_FILE_MIME)) { uri ->
         if (uri != null && preview != null) {
             actions.saveExport(preview, uri)
@@ -375,6 +385,27 @@ private fun ColumnScope.ExportConfirmStep(
                 Spacer(Modifier.width(8.dp))
                 Text("保存到文件")
             }
+        }
+        // 扫码下载：车机上比翻文件选择器顺手，手机扫码直接存手机
+        OutlinedButton(
+            onClick = {
+                if (preview == null) return@OutlinedButton
+                scope.launch {
+                    try {
+                        onQr(actions.prepareQrExport(preview) ?: error("拿不到局域网地址，请确认车机和手机连着同一个网络"))
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (error: Exception) {
+                        exportError = "导出失败：${error.message.orEmpty()}"
+                    }
+                }
+            },
+            enabled = !empty,
+            modifier = Modifier.fillMaxWidth().padding(start = 24.dp, end = 24.dp).heightIn(min = 48.dp).tvFocusRing(RoundedCornerShape(24.dp)),
+        ) {
+            Icon(Icons.Filled.QrCode2, null, Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("扫码下载到手机")
         }
         if (exportError.isNotBlank()) {
             Text(
@@ -738,4 +769,37 @@ internal fun shortPlatform(provider: String): String = when (provider) {
     "migu" -> "咪咕"
     "local" -> "本地"
     else -> platformLabel(provider)
+}
+
+/** 「扫码下载」的二维码页：手机扫了直接开始下载；下载完手动关闭，不影响远控服务。 */
+@Composable
+private fun ColumnScope.FileQrBody(file: ExportFile, url: String) {
+    Column(
+        Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box(
+            Modifier.size(240.dp).clip(RoundedCornerShape(22.dp)).background(MaterialTheme.colorScheme.surfaceContainerHigh),
+            contentAlignment = Alignment.Center,
+        ) {
+            QrCodeImage(
+                text = url,
+                modifier = Modifier.fillMaxSize().padding(12.dp),
+                description = "扫描后在手机上下载歌单文件",
+            )
+        }
+        Text(
+            "手机扫码后直接下载；车机和手机要连着同一个网络",
+            Modifier.padding(top = 12.dp),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            "文件名：${file.fileName}",
+            Modifier.fillMaxWidth().padding(top = 4.dp),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+        )
+    }
 }

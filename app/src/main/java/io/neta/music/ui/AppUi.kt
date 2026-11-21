@@ -211,6 +211,7 @@ class MusicActions(private val model: MusicViewModel) {
     fun applyImport(choices: Map<String, io.neta.music.data.transfer.ImportChoice>) = model.applyImport(choices)
     fun recheckImport() = model.recheckImport()
     fun dismissImport() = model.dismissImport()
+    suspend fun prepareQrExport(preview: io.neta.music.data.transfer.ExportPreview) = model.prepareQrExport(preview)
     fun shareExport(preview: io.neta.music.data.transfer.ExportPreview) = model.shareExport(preview)
     fun addToQueue(song: Song) = model.addToQueue(song)
     fun setSwipePrefs(transform: (io.neta.music.data.SwipePrefs) -> io.neta.music.data.SwipePrefs) = model.setSwipePrefs(transform)

@@ -362,7 +362,7 @@ class SettingsStore(private val context: Context) {
             crossfadeSeconds = (values[crossfadeSecondsKey] ?: 6).coerceIn(4, 10),
             crossfadeAnimation = values[crossfadeAnimationKey] ?: CrossfadeAnimation.Ring.name,
             crossfadeMode = values[crossfadeModeKey] ?: CrossfadeMode.Automix.name,
-            autoLyricsIdle = values[autoLyricsIdleKey] ?: true,
+            autoLyricsIdle = values[autoLyricsIdleKey] ?: false,
             autoLyricsIdleSeconds = (values[autoLyricsIdleSecondsKey] ?: 30).coerceIn(15, 120),
             swcDoubleNextEnabled = values[swcDoubleNextEnabledKey] ?: true,
             swcDoubleTapWindowMs = (values[swcDoubleTapWindowMsKey] ?: 800)
@@ -771,7 +771,7 @@ data class AppSettings(
     /** 交叉淡化还是智能过渡，见 [CrossfadeMode]。 */
     val crossfadeMode: String = "Automix",
     /** 主界面无操作自动进歌词页的总开关：闲置计时和起播跳转都由它控制。 */
-    val autoLyricsIdle: Boolean = true,
+    val autoLyricsIdle: Boolean = false,
     /** 主界面多少秒无操作后自动进歌词页。 */
     val autoLyricsIdleSeconds: Int = 30,
     /**

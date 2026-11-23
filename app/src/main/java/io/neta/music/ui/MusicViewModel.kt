@@ -239,7 +239,7 @@ data class MusicUiState(
     val startupTab: String = "",
     val autoPlayOnLaunch: Boolean = true,
     /** 主界面无操作自动进歌词页：闲置计时和起播跳转共用这一个开关。 */
-    val autoLyricsIdle: Boolean = true,
+    val autoLyricsIdle: Boolean = false,
     /** 主界面多少秒无操作后自动进歌词页。 */
     val autoLyricsIdleSeconds: Int = 30,
     /** 方控右键（媒体下一曲）双击切播放/暂停的总开关，见 [AppSettings.swcDoubleNextEnabled]。 */

@@ -616,10 +616,10 @@ internal fun PlaybackSettingsScreen(
                 )
             }
         }
-        item(key = "autoLyricsHead", contentType = "sectionHeader") { SectionLabel("自动进入歌词页") }
+        item(key = "autoLyricsHead", contentType = "sectionHeader") { SectionLabel("自动进入全屏歌词") }
         item(key = "autoLyricsSwitch", contentType = "switch") {
             SwitchRow(
-                title = "自动进入歌词页",
+                title = "自动进入全屏歌词",
                 checked = state.autoLyricsIdle,
                 onCheckedChange = actions::setAutoLyricsIdle,
                 index = 0,

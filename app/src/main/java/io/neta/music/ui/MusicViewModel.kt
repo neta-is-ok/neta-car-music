@@ -103,6 +103,7 @@ import io.neta.music.data.local.LocalLibrary
 import io.neta.music.data.local.LocalPlayable
 import io.neta.music.data.local.forStorage
 import io.neta.music.data.TopList
+import io.neta.music.data.native.BilibiliCdn
 import io.neta.music.data.TrackOverrideEntity
 import io.neta.music.data.native.AppleLyricsConfig
 import io.neta.music.data.native.AudioQuality
@@ -252,6 +253,8 @@ data class MusicUiState(
     val rhythmDebug: Boolean = false,
     val poster: PosterPrefs = PosterPrefs(),
     /** 全屏歌词动画（模式、自动切换、频谱、各模式设置）。 */
+    val swipe: io.neta.music.data.SwipePrefs = io.neta.music.data.SwipePrefs(),
+    val share: io.neta.music.data.SharePrefs = io.neta.music.data.SharePrefs(),
     val lyricStage: LyricStagePrefs = LyricStagePrefs(),
     /** 歌词文字变换（拆单行双语、简转繁、补罗马音）。 */
     val lyricText: LyricTextPrefs = LyricTextPrefs(),
@@ -620,6 +623,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             rhythmOffsetMs = settings.rhythmOffsetMs,
             rhythmDebug = settings.rhythmDebug,
             poster = settings.poster,
+            swipe = settings.swipe,
+            share = settings.share,
             lyricStage = settings.lyricStage,
             lyricText = settings.lyricText,
             collectionView = settings.collectionView,
@@ -655,8 +660,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         settings = { settingsState.value.aggregation },
         splitOverrides = { splitOverrideKeys },
         mergeOverrides = { mergeTargets },
-        // music.op.wiki 一次搜索要等 MHub 去各上游平台检索，冷缓存单平台就可能 5 秒
-        timeoutOverridesMs = mapOf("mhub" to 15_000),
+        // music.op.wiki 一次搜索要等 MHub 去各上游平台检索，冷缓存单平台就可能 5 秒；
+        // Spotify 未登录时匿名 Web Player 要串行 bootstrap + token + clientToken + 搜索四次请求，
+        // 网络稍慢就过 6 秒（token 有缓存，只有首次这么慢）
+        timeoutOverridesMs = mapOf("mhub" to 15_000, "spotify" to 15_000),
     )
     private val resolver = SourceResolver(
         repository = app.repository,
@@ -2573,6 +2580,19 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         return mode
     }
 
+    fun createPlaylistWithSong(name: String, song: Song) = viewModelScope.launch {
+        val value = name.trim()
+        if (value.isBlank()) return@launch
+        val now = System.currentTimeMillis()
+        val id = java.util.UUID.randomUUID().toString()
+        libraryDao.putPlaylist(
+            io.neta.music.data.PlaylistEntity(id = id, name = value, createdAt = now, updatedAt = now, dirty = true)
+        )
+        addSongsToPlaylist(id, listOf(song))
+        app.sync.onLocalChange()
+        message("已新建歌单「$value」并加入这首歌")
+    }
+
     fun addSongToPlaylist(playlistId: String, song: Song) =
         addSongsToPlaylist(playlistId, listOf(song))
 
@@ -3300,6 +3320,34 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     fun toggleFavorite(song: Song) = viewModelScope.launch { updateFavorite(song) }
 
+    /**
+     * 收藏到平台账号（汽水的「我喜欢的音乐」）。和本机收藏是两件事：这个写去平台，
+     * 换设备也在。平台没实现、没登录、接口报错都转成一条提示，不让界面崩。
+     */
+    fun collectOnPlatform(song: Song) {
+        val provider = song.source
+        if (provider.isBlank() || !app.repository.supportsCollect(provider)) {
+            base.value = base.value.copy(playbackNotice = "${providerName(provider)}暂不支持收藏到账号")
+            return
+        }
+        val cookie = cookieFor(provider)
+        if (cookie.isBlank()) {
+            base.value = base.value.copy(playbackNotice = "请先登录${providerName(provider)}再收藏")
+            return
+        }
+        viewModelScope.launch {
+            val message = try {
+                app.repository.collectTrack(provider, cookie, song)
+                "已收藏《${song.title}》到${providerName(provider)}账号"
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                error.message ?: "收藏失败"
+            }
+            base.value = base.value.copy(playbackNotice = message)
+        }
+    }
+
     /** 显式设置时保持幂等；界面、组件与外部广播共用同一条收藏 / 同步路径。 */
     internal suspend fun updateFavorite(song: Song, favorite: Boolean? = null): Boolean = favoriteMutex.withLock {
         val dao = app.database.dao()
@@ -3418,7 +3466,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     if (!cached.isFile) error("本地缓存文件不存在")
                     cached.copyTo(temp, overwrite = true)
                 } else {
-                    http.newCall(Request.Builder().url(url).build()).execute().use { response ->
+                    // B 站的音频字节在 *.bilivideo.com 上，不带 Referer 和浏览器档 UA 就是 403
+                    // （播放侧那套工厂管不到这里，这次下载是自己发的请求）
+                    val builder = Request.Builder().url(url)
+                    BilibiliCdn.headers(url).forEach { (name, value) -> builder.header(name, value) }
+                    http.newCall(builder.build()).execute().use { response ->
                         if (!response.isSuccessful) error("下载失败：${response.code} ${response.message}")
                         temp.outputStream().use { output -> response.body.byteStream().copyTo(output) }
                     }
@@ -4919,9 +4971,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             val notice = "已跳过《$title》：$message"
             skipNotice = notice
             base.value = base.value.copy(playbackNotice = notice)
+            // seek 是异步命令，发完立刻读 currentMediaItemIndex 多半还是旧位置（换源失败的
+            // 旧地址非空，会被误判成下一首再 prepare 一轮）；先记下下一首的真实位置再跳
+            val next = player.nextMediaItemIndex
             player.seekToNextMediaItem()
             // 下一首已经有地址就直接重新准备；还是空地址的等它切歌解析完再准备，不让播放器再去打开 ""
-            if (base.value.queue.getOrNull(player.currentMediaItemIndex)?.url?.isNotBlank() == true) prepareIfStopped()
+            if (base.value.queue.getOrNull(next)?.url?.isNotBlank() == true) prepareIfStopped()
         }
 
         override fun onPlaybackStateChanged(playbackState: Int) {
@@ -5056,8 +5111,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 } else {
                     val message = noSourceMessage(result.track, result.resolution)
                     PlaybackBroadcast.logPlaybackFailure(failedItem, message)
-                    controller?.pause()
-                    base.value = base.value.copy(playbackNotice = message)
+                    // 换源也没救回来时不能干停在原曲上：照切歌解析失败的处置跳下一首
+                    // （skipUnplayable 里没有下一首或连跳太多首才暂停留提示）。先放下
+                    // failoverInProgress 再跳，跳过去之后的报错才能正常进来分流。
+                    failoverInProgress = false
+                    skipUnplayable(index, track.title, message)
+                    return@launch
                 }
                 failoverInProgress = false
             }
@@ -5814,7 +5873,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     )
 
     /**
-     * MCP 连续点歌：歌手请求优先取歌手热门歌曲，类型 / 心情 / 场景请求优先取匹配歌单。
+     * 外部连续点歌（MCP / 广播共用）：歌手请求优先取歌手热门歌曲，类型 / 心情 / 场景请求优先取匹配歌单。
      * 与单曲点歌不同，这里明确换掉当前队列，避免第一首结束后回到点歌前的列表。
      */
     internal suspend fun playQueueFromBroadcast(
@@ -5823,6 +5882,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         source: String,
         limit: Int,
         shuffle: Boolean?,
+        requestId: String = "",
     ): Int {
         val query = keyword.trim()
         require(query.isNotBlank()) { "请提供歌手名或风格关键词" }
@@ -5845,14 +5905,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
         activeFeed = null
         _playlists.update { if (it.listenActive.isEmpty()) it else it.copy(listenActive = "") }
-        val started = startTrack(tracks.first(), tracks, pinnedProvider = null, openPlayer = false)
+        val started = startTrack(tracks.first(), tracks, pinnedProvider = null, openPlayer = false, playRequestId = requestId)
         if (!started) error(base.value.playbackNotice.ifBlank { base.value.error.ifBlank { "这组歌曲暂时无法播放" } })
         val player = controller ?: error("播放器尚未就绪")
         if (shuffle != null) player.shuffleModeEnabled = shuffle
         val playing = awaitPlaybackStart()
         if (playing) maybeAutoLyricsView()
         check(playing) { "播放尚未开始，请稍后查询状态" }
-        AppLog.i("Player", "MCP 连续播放“$query”，${tracks.size} 首，${if (player.shuffleModeEnabled) "随机" else "顺序"}播放")
+        AppLog.i("Player", "连续点歌“$query”，${tracks.size} 首，${if (player.shuffleModeEnabled) "随机" else "顺序"}播放")
         return tracks.size
     }
 
@@ -6167,6 +6227,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun setRhythmDebug(value: Boolean) = viewModelScope.launch { app.settings.rhythmDebug(value) }
     fun setPosterPrefs(transform: (PosterPrefs) -> PosterPrefs) = viewModelScope.launch { app.settings.poster(transform) }
     fun setLyricStage(transform: (LyricStagePrefs) -> LyricStagePrefs) = viewModelScope.launch { app.settings.lyricStage(transform) }
+    fun setSwipePrefs(transform: (io.neta.music.data.SwipePrefs) -> io.neta.music.data.SwipePrefs) =
+        viewModelScope.launch { app.settings.swipe(transform) }
+    fun setSharePrefs(transform: (io.neta.music.data.SharePrefs) -> io.neta.music.data.SharePrefs) =
+        viewModelScope.launch { app.settings.share(transform) }
+    fun addToQueue(song: Song) = enqueueSongs(listOf(song))
     fun setLyricText(transform: (LyricTextPrefs) -> LyricTextPrefs) = viewModelScope.launch { app.settings.lyricText(transform) }
     suspend fun lyricMemory(songKey: String): LyricMemoryEntry? = app.settings.lyricMemory(songKey)
 
@@ -6547,7 +6612,261 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun importLibrary(uri: Uri, strategy: SyncStrategy = SyncStrategy.Merge) {
-        viewModelScope.launch { app.sync.import(uri, strategy) }
+        // 先嗅探：整库备份照旧合并，歌单文件、洛雪文件出预览
+        if (strategy == SyncStrategy.Merge) openImport(uri) else viewModelScope.launch { app.sync.import(uri, strategy) }
+    }
+
+    // ---------- 歌单文件导出 / 导入 ----------
+
+    private val playlistTransfer by lazy {
+        io.neta.music.data.transfer.PlaylistTransfer(
+            library = libraryDao,
+            music = app.database.dao(),
+            localRefs = { app.sync.localRefs },
+            localSongs = {
+                // 本地音乐库是懒加载的：只在文件里有本地歌时才碰它，最多等 5 秒读完
+                val index = withTimeoutOrNull(5_000) { app.localLibrary.index.first { it.loaded } }
+                index?.byId?.values.orEmpty().filter { it.onDevice }
+                    .map { io.neta.music.data.transfer.LocalCandidate(it.song, it.row.displayName) }
+            },
+            migu = { ids, onBatch ->
+                (io.neta.music.data.native.NativeProviders.get("migu") as? io.neta.music.data.native.MiguProvider)
+                    ?.songsBySongId(ids, onBatch).orEmpty()
+            },
+            knownProvider = { it == LOCAL_SOURCE || io.neta.music.data.native.NativeProviders.get(it) != null },
+        )
+    }
+
+    private val _transfer = MutableStateFlow<TransferUi>(TransferUi.Idle)
+
+    /** 从文件导入的进度；外壳按它挂导入预览面板。 */
+    val transfer: StateFlow<TransferUi> = _transfer.asStateFlow()
+
+    private var importJob: Job? = null
+
+    /** 手机传来的整库备份正在合并：合并到一半不能取消。 */
+    private var mergingLibrary = false
+
+    /** 正在预览的文件：「重新换取」按它重算。 */
+    private var importSource: ImportSource? = null
+
+    private class ImportSource(
+        val content: io.neta.music.data.transfer.TransferContent,
+        val fileName: String,
+        val fromPhone: Boolean,
+    )
+
+    /** 从文件导入（系统文件选择器选的）：最多读 32MB，再按内容分流。 */
+    fun openImport(uri: Uri) {
+        importJob?.cancel()
+        importJob = viewModelScope.launch {
+            val context = getApplication<Application>()
+            val name = withContext(Dispatchers.IO) { displayNameOf(uri) }
+            val bytes = try {
+                withContext(Dispatchers.IO) {
+                    context.contentResolver.openInputStream(uri)?.use {
+                        io.neta.music.data.transfer.TransferReader.readBounded(it, io.neta.music.data.transfer.TransferReader.MAX_FILE_BYTES)
+                    } ?: throw java.io.IOException("无法读取所选文件")
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                message(error.message ?: "无法读取所选文件", error = true)
+                return@launch
+            }
+            if (bytes == null) {
+                message("文件太大（超过 32MB）", error = true)
+                return@launch
+            }
+            handleImport(bytes, name, fromPhone = false)
+        }
+    }
+
+    private suspend fun handleImport(bytes: ByteArray, name: String, fromPhone: Boolean) {
+        val content = withContext(Dispatchers.Default) { io.neta.music.data.transfer.TransferReader.read(bytes) }
+        when (content) {
+            // 整库备份照旧直接合并，提示一字不改
+            is io.neta.music.data.transfer.TransferContent.Library -> {
+                _transfer.update { if (it is TransferUi.Reading) it.copy(step = "正在合并整库备份…") else it }
+                mergingLibrary = true
+                try {
+                    withContext(NonCancellable) {
+                        app.sync.importText(content.text, SyncStrategy.Merge)
+                    }
+                } finally {
+                    mergingLibrary = false
+                    _transfer.value = TransferUi.Idle
+                }
+            }
+            is io.neta.music.data.transfer.TransferContent.Unsupported -> {
+                _transfer.value = TransferUi.Idle
+                message(content.message, error = true)
+            }
+            else -> {
+                importSource = ImportSource(content, name, fromPhone)
+                planImport()
+            }
+        }
+    }
+
+    private suspend fun planImport() {
+        val source = importSource ?: return
+        _transfer.value = TransferUi.Reading(source.fileName, "正在读取…", source.fromPhone)
+        val plan = try {
+            withContext(Dispatchers.IO) {
+                playlistTransfer.plan(source.content, source.fileName, source.fromPhone) { step ->
+                    _transfer.update { if (it is TransferUi.Reading) it.copy(step = step) else it }
+                }
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            _transfer.value = TransferUi.Idle
+            message("读取歌单失败：${error.message.orEmpty()}", error = true)
+            return
+        }
+        _transfer.value = TransferUi.Preview(plan)
+    }
+
+    /** 咪咕有没换到的：再换一次。 */
+    fun recheckImport() {
+        if (_transfer.value !is TransferUi.Preview) return
+        importJob?.cancel()
+        importJob = viewModelScope.launch { planImport() }
+    }
+
+    /** 关掉预览 = 放弃这次导入；正在写库时不打断。 */
+    fun dismissImport() {
+        if (_transfer.value is TransferUi.Applying || mergingLibrary) return
+        importJob?.cancel()
+        importJob = null
+        importSource = null
+        _transfer.value = TransferUi.Idle
+    }
+
+    fun applyImport(choices: Map<String, io.neta.music.data.transfer.ImportChoice>) {
+        val plan = (_transfer.value as? TransferUi.Preview)?.plan ?: return
+        _transfer.value = TransferUi.Applying(plan)
+        importJob = launchPlaylistEdit {
+            val result = try {
+                withContext(Dispatchers.IO) { playlistTransfer.apply(plan, choices) }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                io.neta.music.data.transfer.ImportResult(0, 0, 0, 0, 1, firstError = error.message.orEmpty())
+            }
+            importSource = null
+            _transfer.value = TransferUi.Idle
+            if (result.lists > 0) {
+                app.sync.onLocalChange()
+            }
+            message(importResultText(result), error = result.lists == 0 && result.failed > 0)
+        }
+    }
+
+    private fun displayNameOf(uri: Uri): String = runCatching {
+        getApplication<Application>().contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+            ?.use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
+    }.getOrNull()?.takeIf { it.isNotBlank() } ?: uri.lastPathSegment?.substringAfterLast('/').orEmpty().ifBlank { "所选文件" }
+
+    /** 导出面板打开时算一次：歌单名、各平台首数、文件名。[ids] 里的 `@favorites` 是我的收藏。 */
+    suspend fun exportPreview(ids: List<String>): io.neta.music.data.transfer.ExportPreview =
+        withContext(Dispatchers.IO) { playlistTransfer.exportPreview(ids) }
+
+    suspend fun exportFile(preview: io.neta.music.data.transfer.ExportPreview): io.neta.music.data.transfer.ExportFile =
+        withContext(Dispatchers.IO) { playlistTransfer.exportFile(preview, appVersionLabel()) }
+
+    private fun appVersionLabel(): String = runCatching {
+        val context = getApplication<Application>()
+        val info = context.packageManager.getPackageInfo(context.packageName, 0)
+        val code = if (android.os.Build.VERSION.SDK_INT >= 28) info.longVersionCode else @Suppress("DEPRECATION") info.versionCode.toLong()
+        "吒友爱听 ${info.versionName} ($code)"
+    }.getOrDefault("吒友爱听")
+
+    /** 「扫码下载到手机」：写好导出文件并确保远控服务在跑，返回文件与扫码地址；拿不到局域网地址返回 null。 */
+    suspend fun prepareQrExport(preview: io.neta.music.data.transfer.ExportPreview): Pair<io.neta.music.data.transfer.ExportFile, String>? =
+        withContext(Dispatchers.IO) {
+            val file = exportFile(preview)
+            val context = getApplication<Application>()
+            val dir = java.io.File(context.cacheDir, "exports")
+            dir.mkdirs()
+            java.io.File(dir, file.fileName).writeBytes(file.bytes)
+            val manager = app.remoteControl
+            if (!manager.state.value.running) {
+                manager.start()
+                withTimeoutOrNull(5_000) { manager.state.first { it.running } } ?: return@withContext null
+            }
+            val base = manager.address() ?: return@withContext null
+            file to "$base/transfer/${android.net.Uri.encode(file.fileName)}"
+        }
+
+    /** 「分享」：导出文件写进缓存目录，再交系统分享面板。 */
+    fun shareExport(preview: io.neta.music.data.transfer.ExportPreview) {
+        viewModelScope.launch {
+            val context = getApplication<Application>()
+            val shared = runCatching {
+                withContext(Dispatchers.IO) {
+                    val file = exportFile(preview)
+                    val dir = java.io.File(context.cacheDir, "exports")
+                    dir.deleteRecursively()
+                    dir.mkdirs()
+                    val target = java.io.File(dir, file.fileName)
+                    target.writeBytes(file.bytes)
+                    file to androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", target)
+                }
+            }.getOrElse { error ->
+                if (error is CancellationException) throw error
+                message("导出失败：${error.message.orEmpty()}", error = true)
+                return@launch
+            }
+            val (file, uri) = shared
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = file.mime
+                putExtra(Intent.EXTRA_STREAM, uri)
+                putExtra(Intent.EXTRA_SUBJECT, file.fileName)
+                clipData = android.content.ClipData.newRawUri(file.fileName, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            runCatching {
+                context.startActivity(Intent.createChooser(intent, "分享歌单").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            }.onFailure { message("这台设备上没有能接收文件的应用", error = true) }
+        }
+    }
+
+    /** 「保存到文件」：系统文件选择器建好的文档里写字节。 */
+    fun saveExport(preview: io.neta.music.data.transfer.ExportPreview, uri: Uri) {
+        viewModelScope.launch {
+            val context = getApplication<Application>()
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    val file = exportFile(preview)
+                    context.contentResolver.openOutputStream(uri, "wt")?.use { it.write(file.bytes) }
+                        ?: error("无法写入所选文件")
+                    file
+                }
+            }.onSuccess { file ->
+                // 一个歌单写名字，几个歌单写个数（标题「4 个歌单」套上书名号不通）
+                val what = if (preview.lists.size == 1) "「${preview.title}」" else " ${preview.lists.size} 个歌单 "
+                message("已导出$what· ${file.counts.kept} 首")
+            }.onFailure { error ->
+                if (error is CancellationException) throw error
+                message("导出失败：${error.message.orEmpty()}", error = true)
+            }
+        }
+    }
+
+    /** 导入完的提示：「已导入 3 个歌单，共 298 首（12 首原来就在）」；有失败的写清几个失败。 */
+    private fun importResultText(result: io.neta.music.data.transfer.ImportResult): String = buildString {
+        if (result.lists == 0) {
+            append(if (result.failed > 0) "导入失败：${result.firstError}" else "没有导入任何歌单")
+            return@buildString
+        }
+        if (result.failed > 0) {
+            append("${result.lists} 个歌单导入了，${result.failed} 个失败：${result.firstError}")
+        } else {
+            append("已导入 ${result.lists} 个歌单，共 ${result.added} 首")
+            if (result.alreadyIn > 0) append("（${result.alreadyIn} 首原来就在）")
+        }
     }
 
     fun syncProviderLabel(id: String): String = when (id) {
@@ -6599,6 +6918,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun backgroundUpdate() = app.update.continueInBackground()
+
+    fun dismissUpdate() = app.update.dismissUpdateDialog()
 
     fun installUpdate() {
         viewModelScope.launch { launchUpdateInstaller() }
@@ -6670,11 +6991,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             // 部分盒子它恒为 false，拿它当条件会把用户卡在设置页和弹窗之间来回打转
             pendingUpdateInstall = false
             viewModelScope.launch { launchUpdateInstaller() }
-        } else if (update.phase == UpdatePhase.Ready && update.file != null &&
-            (lastInstallOutcome == InstallResult.Launched || lastInstallOutcome == null)
-        ) {
+        } else if (update.phase == UpdatePhase.Ready && update.file != null && lastInstallOutcome == null) {
             // 无论是否选择后台下载，回到应用后都自动打开已就绪更新的安装界面。
-            // 没拉起过（下载完时界面不在前台，比如组件在后台起播）也在这里拉起
+            // 没拉起过（下载完时界面不在前台，比如组件在后台起播）也在这里拉起。
+            // 已经拉起过的不再自动重开：Activity 安装器没有结果回调，安装失败或取消后
+            // 每次回前台都重弹就成了无限循环，之后交给用户手动点「重新打开安装器」。
             viewModelScope.launch { launchUpdateInstaller() }
         }
         // 没有待安装的更新时定期复查，发现新版本同样立刻下载

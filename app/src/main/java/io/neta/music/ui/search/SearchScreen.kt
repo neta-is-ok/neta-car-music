@@ -177,6 +177,7 @@ import io.neta.music.ui.adaptive.foldAnchor
 import io.neta.music.ui.adaptive.rememberFoldAnchor
 import io.neta.music.ui.adaptive.rememberFoldSplit
 import io.neta.music.ui.components.AppLoading
+import io.neta.music.ui.components.rememberRowSwipe
 import io.neta.music.ui.components.Posture
 import io.neta.music.ui.components.ConnectedToggleGroup
 import io.neta.music.ui.components.LocalAppSnackbar
@@ -455,6 +456,7 @@ fun SearchScreen(
                 actionTrack.value = null
                 ctx.openSource(track)
             },
+            onCollect = { actions.collectOnPlatform(song) },
             onRemoveFromPlaylist = null,
             onDismiss = { actionTrack.value = null },
             onMerge = {
@@ -1212,6 +1214,9 @@ private fun SearchSongRow(
     val cookies = ctx.cookies.value
     var menuOpen by remember { mutableStateOf(false) }
     val picking = ctx.selection.active
+    // 滑动的收藏、下载、加歌单都用最优音源那一首（和 ⋮ 面板一样）；任一平台的版本收藏过就算已收藏
+    val swipeSong = remember(track, cookies) { preferredSong(track, cookies) }
+    val sourceKeys = remember(track) { track.sources.map { it.song.key } }
     val isSelected = picking && track.id in ctx.selection.selected
     val wide = rowWidth >= 560.dp
     val inlineMax = if (rowWidth >= 420.dp) 4 else 3
@@ -1245,6 +1250,15 @@ private fun SearchSongRow(
         else -> ({ ctx.openActions(track) })
     }
     SongRow(
+        swipe = rememberRowSwipe(
+            swipeSong,
+            emptyList(),
+            enabled = !picking,
+            favoriteKeys = sourceKeys,
+            onChooseSource = { ctx.openSource(track) },
+        ),
+        // 平板行尾有「更多」菜单按钮：悬停按钮插在它前面
+        hoverReplacesTrailing = !window.isTablet,
         title = track.title,
         subtitle = if (wide) {
             listOf(track.subtitle, track.durationLabel).filter { it.isNotBlank() }.joinToString(" · ")
@@ -1309,6 +1323,8 @@ private fun TrackMenu(ctx: SearchCtx, track: CanonicalTrack, expanded: Boolean, 
                 onClick = { pickPlaylist = true },
             )
             MenuItem("下载", Icons.Filled.Download) { onDismiss(); ctx.actions.download(song) }
+            // 车机/平板形态的行菜单没有底部弹层，收藏到账号只能从这里进（上游只做了手机形态）
+            MenuItem("收藏到账号", Icons.Filled.FavoriteBorder) { onDismiss(); ctx.actions.collectOnPlatform(song) }
             HorizontalDivider()
             MenuItem("换源", Icons.Filled.SwapHoriz) { onDismiss(); ctx.openSource(track) }
             MenuItem("合并到…", Icons.Filled.Merge) { onDismiss(); ctx.actions.openMerge(track) }

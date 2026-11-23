@@ -1,6 +1,9 @@
 package io.neta.music.ui.player
 
 import androidx.compose.runtime.getValue
+import io.neta.music.ui.player.share.LocalLyricPickProbe
+import io.neta.music.ui.player.share.pickShareAction
+import io.neta.music.ui.player.share.lyricPickTarget
 import androidx.compose.runtime.setValue
 import io.neta.music.ui.theme.LyricsAlignment
 import io.neta.music.ui.theme.LyricsTextScope
@@ -656,6 +659,8 @@ private fun LyricRow(
 ) {
     // 每行只订阅自己离当前行的远近：换行时只有前后几行重组，远处的行不动
     val distance by remember(index, active) { derivedStateOf { lyricDistance(index, active.value) } }
+    // 全屏歌词长按选句：登记这一行是第几句；读屏用户用自定义操作选它
+    val pick = LocalLyricPickProbe.current
     // 只在图层和绘制里读：中间的行一直是 null，滚动时不重画；只有渐隐区里的几行随位置重画遮罩
     val edge = remember(index, edgeOf) { derivedStateOf(structuralEqualityPolicy()) { edgeOf(index) } }
     val current = distance == 0
@@ -684,6 +689,7 @@ private fun LyricRow(
             .fillMaxWidth()
             // 电视上遥控器停在哪一句要看得清，渐隐区里也一样：描边画在行的裁切和渐隐图层外面。
             // 不放大：整行放大会让左对齐的字横着跳一下
+            .lyricPickTarget(pick, index)
             .tvFocusRing(LyricRowShape, scale = 1f)
             .clip(LyricRowShape)
             .then(if (synced && line.timeMs >= 0) Modifier.clickable(onClickLabel = "从这一句播放") { onSeek(line.timeMs) } else Modifier)

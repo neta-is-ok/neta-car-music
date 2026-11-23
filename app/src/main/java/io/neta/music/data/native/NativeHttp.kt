@@ -71,8 +71,15 @@ object NativeHttp {
         cookie: String = "",
         randomIp: Boolean = false,
         userAgent: String = DEFAULT_USER_AGENT,
-    ): String = getResponse(url, headers, cookie, randomIp, userAgent).body
+        throwOnError: Boolean = true,
+    ): String = getResponse(url, headers, cookie, randomIp, userAgent, throwOnError = throwOnError).body
 
+    /**
+     * 非 2xx 时抛 [IOException] 还是把状态码交回调用方。
+     *
+     * 默认抛异常，历史行为不变。少数调用方（Spotify）要按状态码决定重试与降级，
+     * 对它们传 false，自己看 [NativeResponse.code]。
+     */
     suspend fun getResponse(
         url: String,
         headers: Map<String, String> = emptyMap(),
@@ -83,13 +90,14 @@ object NativeHttp {
         followRedirects: Boolean = true,
         diagnostic: ((String) -> Unit)? = null,
         cookieJar: CookieJar? = null,
+        throwOnError: Boolean = true,
     ): NativeResponse {
         val request = Request.Builder()
             .url(url)
             .get()
             .applyCommonHeaders(headers, cookie, randomIp, userAgent)
             .build()
-        return execute(request, binary, followRedirects, diagnostic, cookieJar)
+        return execute(request, binary, followRedirects, diagnostic, cookieJar, throwOnError)
     }
 
     suspend fun postForm(
@@ -123,13 +131,14 @@ object NativeHttp {
         userAgent: String = DEFAULT_USER_AGENT,
         diagnostic: ((String) -> Unit)? = null,
         cookieJar: CookieJar? = null,
+        throwOnError: Boolean = true,
     ): NativeResponse {
         val request = Request.Builder()
             .url(url)
             .post(body.toRequestBody("application/json; charset=utf-8".toMediaType()))
             .applyCommonHeaders(headers, cookie, randomIp, userAgent)
             .build()
-        return execute(request, diagnostic = diagnostic, cookieJar = cookieJar)
+        return execute(request, diagnostic = diagnostic, cookieJar = cookieJar, throwOnError = throwOnError)
     }
 
     suspend fun postBytes(
@@ -239,6 +248,7 @@ object NativeHttp {
         followRedirects: Boolean = true,
         diagnostic: ((String) -> Unit)? = null,
         cookieJar: CookieJar? = null,
+        throwOnError: Boolean = true,
     ): NativeResponse =
         suspendCancellableCoroutine { continuation ->
             diagnostic?.invoke(
@@ -275,7 +285,7 @@ object NativeHttp {
                         diagnostic?.invoke("body chars=${body.length} bytes=${bytes.size}")
                         // 手动跟随跳转时 3xx 是正常回包：Location 才是要读的东西
                         val isRedirect = !followRedirects && it.code in 300..399
-                        if (!it.isSuccessful && !isRedirect) {
+                        if (!it.isSuccessful && !isRedirect && throwOnError) {
                             if (continuation.isActive) {
                                 continuation.resumeWithException(
                                     IOException("HTTP ${it.code} ${it.message}: ${body.take(300)}")

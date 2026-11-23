@@ -625,7 +625,7 @@ class SyncCoordinator(
                         syncDao.clearAccounts()
                         syncDao.clearBases()
                         syncDao.clearConflicts()
-                        val uploaded = provider.update(token, remoteFile.id, encodeForUpload(local, providerId), remoteFile.revision)
+                        val uploaded = pushUpdate(provider, token, remoteFile.id, encodeForUpload(local, providerId), remoteFile)
                         val newAccount = SyncAccountEntity(
                             provider = providerId,
                             remoteId = remoteFile.id,
@@ -733,10 +733,10 @@ class SyncCoordinator(
             var round = 0
             while (uploaded == null) {
                 uploaded = try {
-                    provider.update(pending.token, pending.remoteId, encodeForUpload(merged, pending.providerId), remoteFile.revision)
+                    pushUpdate(provider, pending.token, pending.remoteId, encodeForUpload(merged, pending.providerId), remoteFile)
                 } catch (error: SyncException) {
-                    // 选合并方式期间云端被别的设备改了（WebDAV 412）：按最新的云端重新套一遍所选方式。
-                    // 先传后写本机，传不上时本机歌单保持原样
+                    // 选合并方式期间云端真的被别的设备改了（WebDAV 412 且内容已变）：
+                    // 按最新的云端重新套一遍所选方式。先传后写本机，传不上时本机歌单保持原样
                     if (error.kind != SyncFailureKind.Precondition || ++round >= MAX_PUSH_ROUNDS) throw error
                     remoteFile = provider.read(pending.token, pending.remoteId)
                     merged = build(SyncJson.decode(remoteFile.content))
@@ -836,14 +836,10 @@ class SyncCoordinator(
             )
         }
         return@withLock try {
+            // 这里以前拿 revision 和记录冲突时比对，不一致就拦下让用户重新同步；但 ETag 不稳的
+            // 服务器（OpenList 等）每次读都在“变”，冲突永远处理不完。真被别的设备抢先写也兜得住：
+            // 那台设备的改动还在它本地，下次同步按 base 三方合并会再回来，这里不再拦。
             val remoteFile = provider.read(token, account.remoteId)
-            if (account.remoteRevision.isNotBlank() && remoteFile.revision.isNotBlank() &&
-                remoteFile.revision != account.remoteRevision
-            ) {
-                fail("云端文件在冲突处理期间又发生变化，请重新同步。")
-                emit("云端文件已变化，请重新同步。", error = true)
-                return@withLock false
-            }
             val local = localSnapshot()
             val uploaded = try {
                 upload(provider, token, account, local, remoteFile)
@@ -1172,6 +1168,17 @@ class SyncCoordinator(
         val raw = context.contentResolver.openInputStream(uri)?.use { input ->
             input.readBytes().toString(Charsets.UTF_8)
         } ?: error("无法读取所选文件")
+        importText(raw, strategy)
+    } catch (error: SyncException) {
+        emit(error.message, error = true)
+        false
+    } catch (error: Exception) {
+        emit(error.message ?: "导入失败", error = true)
+        false
+    }
+
+    /** 整库备份从字符串导入；歌单文件导入分流时也走这里合并整库备份。 */
+    suspend fun importText(raw: String, strategy: SyncStrategy = SyncStrategy.Merge): Boolean = try {
         val remote = SyncJson.decode(raw)
         if (strategy == SyncStrategy.Remote && !ensureBackup()) return false
         val local = localSnapshot()
@@ -1639,15 +1646,37 @@ class SyncCoordinator(
         val uploaded = if (account.remoteId.isBlank()) {
             provider.create(token, content)
         } else {
-            provider.update(
+            pushUpdate(
+                provider,
                 token,
                 if (remoteFile.id.isBlank()) account.remoteId else remoteFile.id,
                 content,
-                remoteFile.revision,
+                remoteFile,
             )
         }
         markClean(snapshot)
         return uploaded
+    }
+
+    /**
+     * 条件上传 + 假 412 的兜底。If-Match 被拒时重读一次云端：内容还和合并依据的那份一致，
+     * 就只是 ETag 不稳（OpenList 这类服务器每个请求给的 ETag 都不一样，If-Match 永远不成立），
+     * 退回不带条件的 PUT——要覆盖的和刚读到的一字不差，丢不了别人的数据；
+     * 内容真的变了才把 412 原样抛出去，交给调用方的循环按新内容重新合并。
+     */
+    private suspend fun pushUpdate(
+        provider: PlaylistSyncProvider,
+        token: String,
+        remoteId: String,
+        content: String,
+        base: RemoteFile,
+    ): RemoteFile = try {
+        provider.update(token, remoteId, content, base.revision)
+    } catch (error: SyncException) {
+        if (error.kind != SyncFailureKind.Precondition) throw error
+        val fresh = provider.read(token, remoteId)
+        if (fresh.content != base.content) throw error
+        provider.update(token, remoteId, content, "")
     }
 
     private suspend fun markClean(snapshot: SyncSnapshot) {
@@ -1734,8 +1763,14 @@ class SyncCoordinator(
 internal fun shouldPullOnScreen(lastSyncedAt: Long, now: Long): Boolean =
     now - lastSyncedAt >= SyncCoordinator.SCREEN_PULL_STALE_MS
 
-/** revision 是首选依据；服务端没给 revision 时退回比较时间戳和内容。 */
+/**
+ * 内容一致就是没变，revision 只是内容拿不到时的辅助。不少 WebDAV 服务器每次请求给的 ETag
+ * 都不一样（弱 ETag、PUT 和 GET 写法不同、按请求现生成），只比 revision 会把没变的文件
+ * 当成一直在变，每轮重合并到上限就报“云端文件持续变化”。防覆盖不靠这里：靠上传时的
+ * If-Match 加 412 后的内容复核（见 [SyncCoordinator.pushUpdate]）。
+ */
 internal fun remoteMatches(current: RemoteFile, other: RemoteFile): Boolean {
+    if (current.content == other.content) return true
     if (current.revision.isNotBlank() && other.revision.isNotBlank()) return current.revision == other.revision
-    return current.updatedAt == other.updatedAt && current.content == other.content
+    return false
 }

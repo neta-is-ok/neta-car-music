@@ -8,7 +8,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.IntentSender
+import android.content.pm.PackageInfo
 import android.content.pm.PackageInstaller
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.util.Log
@@ -90,6 +92,10 @@ data class UpdateUiState(
     val permissionRequired: Boolean = false,
     /** 只收起下载期间的进度弹窗，不阻止完成后的前台安装提示。 */
     val backgroundDownload: Boolean = false,
+    /** 系统安装器已拉起过：Activity 方式拿不到安装结果，之后回前台不再自动重开，交给用户手动重开。 */
+    val installLaunched: Boolean = false,
+    /** 用户收起更新弹窗；发现新版本或重新下载前不再弹出，入口仍在「关于与更新」。 */
+    val dialogDismissed: Boolean = false,
 )
 
 enum class InstallResult { Launched, NeedsPermission, Failed }
@@ -189,6 +195,8 @@ class UpdateRepository(
                     error = "",
                     phaseLabel = "",
                     backgroundDownload = it.backgroundDownload && it.info?.versionCode == info.versionCode,
+                    installLaunched = false,
+                    dialogDismissed = false,
                 )
             }
             true
@@ -227,11 +235,13 @@ class UpdateRepository(
             it.copy(
                 phase = UpdatePhase.Downloading,
                 progress = 0f,
-                phaseLabel = "正在下载",
-                error = "",
-                file = null,
-                permissionRequired = false,
-            )
+                    phaseLabel = "正在下载",
+                    error = "",
+                    file = null,
+                    permissionRequired = false,
+                    // 用户点过「重试下载」说明还想装，重新下载时恢复弹窗
+                    dialogDismissed = false,
+                )
         }
         downloadCancelled = false
         try {
@@ -310,6 +320,11 @@ class UpdateRepository(
 
     fun continueInBackground() {
         _state.update { if (it.info == null) it else it.copy(backgroundDownload = true) }
+    }
+
+    /** 收起更新弹窗；发现新版本或重新下载前不再弹出，入口仍在「关于与更新」页面和完成通知。 */
+    fun dismissUpdateDialog() {
+        _state.update { it.copy(dialogDismissed = true) }
     }
 
     fun reportDownloadStartFailure(message: String) {
@@ -429,7 +444,8 @@ class UpdateRepository(
     private fun verifyApk(file: File, info: UpdateInfo) {
         val current = currentPackageInfo() ?: throw IOException("无法读取当前版本")
         if (info.versionCode <= current.code) throw IOException("更新清单版本不高于当前版本，已拒绝安装")
-        val archive = context.packageManager.getPackageArchiveInfo(file.absolutePath, 0)
+        @Suppress("DEPRECATION")
+        val archive = context.packageManager.getPackageArchiveInfo(file.absolutePath, PackageManager.GET_SIGNATURES)
             ?: throw IOException("无法读取更新包信息")
         if (archive.packageName != context.packageName) {
             throw IOException("更新包包名与当前应用不一致，已拒绝安装")
@@ -438,18 +454,57 @@ class UpdateRepository(
         if (archiveCode != info.versionCode) {
             throw IOException("更新包版本号与清单不一致，已拒绝安装")
         }
+        if (!sameSignerAsInstalled(archive)) {
+            throw IOException(
+                "更新包与已装版本签名不一致，无法覆盖安装；请先导出歌单或同步备份，" +
+                    "卸载后从 GitHub Releases 重新安装",
+            )
+        }
     }
+
+    /**
+     * 覆盖安装要求新旧包同签名，否则系统安装器只会回一句“应用未安装”，用户无从排查；
+     * 下载后先比对证书摘要，不一致就提前说清楚。读不到任一侧签名时不拦截，交给安装器判断。
+     */
+    private fun sameSignerAsInstalled(archive: PackageInfo): Boolean {
+        val installed = runCatching {
+            val flags = if (Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES
+            else @Suppress("DEPRECATION") PackageManager.GET_SIGNATURES
+            context.packageManager.getPackageInfo(context.packageName, flags)
+        }.getOrNull() ?: return true
+        val installedSigners = signerDigests(installed) ?: return true
+        val archiveSigners = signerDigests(archive) ?: return true
+        return installedSigners == archiveSigners
+    }
+
+    /** 签名证书的 SHA-256 摘要集合；拿不到签名信息时返回 null，调用方不以此拦截安装。 */
+    private fun signerDigests(info: PackageInfo): Set<String>? = runCatching {
+        val digests = mutableSetOf<String>()
+        if (Build.VERSION.SDK_INT >= 28) {
+            info.signingInfo?.apkContentsSigners?.forEach { digests += sha256Hex(it.toByteArray()) }
+        }
+        @Suppress("DEPRECATION")
+        info.signatures?.forEach { digests += sha256Hex(it.toByteArray()) }
+        digests.takeIf { it.isNotEmpty() }
+    }.getOrNull()
+
+    private fun sha256Hex(bytes: ByteArray): String =
+        MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
 
     /**
      * 唤起系统安装器，不拿 `PackageManager.canRequestPackageInstalls` 当门槛：
      * 部分电视盒子这个接口恒返回 false，安装器却能正常安装，拦在门上只会把用户送去一个不存在的设置页。
      *
-     * 依次尝试 ACTION_VIEW → ACTION_INSTALL_PACKAGE → PackageInstaller 会话；只有全都起不来时才认为
-     * 真的缺“安装未知来源”授权，返回 [InstallResult.NeedsPermission]。连授权页都没有的 ROM
-     * 由调用方转到手动安装，见 [exportForManualInstall]。
+     * 优先走 PackageInstaller 会话：安装确认界面同样由系统安装器弹出，但结果会回到
+     * [registerInstallResultReceiver]，失败时能拿到真实原因（存储不足、签名不一致等）展示给用户；
+     * 直接拉 ACTION_VIEW 安装器是拿不到任何结果的。会话起不来时再退到
+     * ACTION_VIEW → ACTION_INSTALL_PACKAGE；只有全都起不来时才认为真的缺“安装未知来源”授权，
+     * 返回 [InstallResult.NeedsPermission]。连授权页都没有的 ROM 由调用方转到手动安装，见 [exportForManualInstall]。
      */
     suspend fun install(file: File): InstallResult {
-        _state.update { it.copy(permissionRequired = false, error = "") }
+        // Activity 安装器没有结果回调，这里同时记下「已拉起过」，供回前台时停止自动重开
+        _state.update { it.copy(permissionRequired = false, error = "", installLaunched = true) }
+        if (withContext(Dispatchers.IO) { commitInstallSession(file) }) return InstallResult.Launched
         val uri = runCatching {
             FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
         }.onFailure {
@@ -459,7 +514,6 @@ class UpdateRepository(
             if (startInstallerActivity(Intent.ACTION_VIEW, uri)) return InstallResult.Launched
             if (startInstallerActivity(Intent.ACTION_INSTALL_PACKAGE, uri)) return InstallResult.Launched
         }
-        if (withContext(Dispatchers.IO) { commitInstallSession(file) }) return InstallResult.Launched
         _state.update { it.copy(permissionRequired = true, error = "请先允许本应用安装未知来源的应用") }
         return InstallResult.NeedsPermission
     }
@@ -589,7 +643,10 @@ class UpdateRepository(
                     _state.update { it.copy(error = "", message = "更新包已安装") }
                 } else {
                     _state.update {
-                        it.copy(error = "安装失败${if (detail.isNullOrBlank()) "" else "：$detail"}")
+                        it.copy(
+                            error = if (detail.isNullOrBlank()) "安装未完成，可能被取消了；可点「重新打开安装器」重试"
+                            else "安装失败：$detail",
+                        )
                     }
                 }
             }

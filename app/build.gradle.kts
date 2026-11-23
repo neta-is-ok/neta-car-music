@@ -81,6 +81,12 @@ android {
                 signingConfigs.getByName("release")
             } else null
         }
+        debug {
+            // 与正式包同一签名：debug 包能直接覆盖安装正式版，实机排查和模拟器实测不用换包
+            signingConfig = if (hasReleaseKeystore) {
+                signingConfigs.getByName("release")
+            } else null
+        }
     }
 
     compileOptions {

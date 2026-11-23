@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.Lyrics
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.SwapHoriz
@@ -76,6 +77,18 @@ import io.neta.music.playback.SleepTimerState
 import io.neta.music.data.LyricTextPrefs
 import io.neta.music.ui.LyricPipeline
 import io.neta.music.ui.withSubline
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import io.neta.music.ui.AddToPlaylistSheet
+import io.neta.music.ui.player.share.LocalLyricPickProbe
+import io.neta.music.ui.player.share.LyricPickProbe
+import io.neta.music.ui.player.share.ShareOverlay
+import io.neta.music.ui.player.share.ShareSession
+import io.neta.music.ui.player.share.initialPick
+import io.neta.music.ui.player.share.pickLines
+import io.neta.music.ui.player.share.shareLink
+import io.neta.music.ui.theme.LocalSeedColor
 import io.neta.music.ui.player.stage.AnimationSheet
 import io.neta.music.ui.player.stage.StageBinding
 import io.neta.music.ui.player.stage.pick
@@ -122,6 +135,12 @@ fun PlayerScreen(
     val song = state.current ?: return
     val window = LocalAppWindow.current
     var lyricsMode by rememberSaveable { mutableStateOf(false) }
+    // 歌词分享：全屏歌词长按任意一句进选句层，再进分享页；会话是长按那一刻的快照。电视不做分享
+    val shareAllowed = !window.isTv
+    var share by remember { mutableStateOf<ShareSession?>(null) }
+    val pickProbe = remember { LyricPickProbe() }
+    val haptics = LocalHapticFeedback.current
+    val seedColor = LocalSeedColor.current
     // 桌面歌词组件点进来：直接进歌词视图
     LaunchedEffect(lyricsRequest) {
         if (!lyricsRequest) return@LaunchedEffect
@@ -189,6 +208,24 @@ fun PlayerScreen(
     val active = remember(lyrics, position) {
         derivedStateOf {
             if (lyrics.synced) LyricsParser.activeLineIndex(lyrics.lines, position.value) else -1
+        }
+    }
+    androidx.compose.runtime.SideEffect {
+        pickProbe.enabled = shareAllowed && share == null && !lyricsLoading && lyrics.raw.isNotBlank() && lyricsMode
+        pickProbe.onRequest = { hit ->
+            val lines = pickLines(lyrics.displayLines())
+            if (lines.isNotEmpty()) {
+                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                share = ShareSession(
+                    song = song,
+                    link = shareLink(song, state.currentTrack),
+                    lines = lines,
+                    synced = lyrics.synced,
+                    seed = seedColor,
+                    initial = initialPick(lines, hit, active.value),
+                )
+                idle.sleep()
+            }
         }
     }
 
@@ -263,6 +300,7 @@ fun PlayerScreen(
                 else -> BackdropScrim.Phone
             },
         )
+        CompositionLocalProvider(LocalLyricPickProbe provides pickProbe.takeIf { shareAllowed }) {
         when {
             window.isTv -> TvPlayer(
                 song = song,
@@ -381,6 +419,18 @@ fun PlayerScreen(
                 transitionAnimation = state.crossfadeAnimation,
             )
         }
+        }
+        // 歌词分享覆盖层：选句、样式、导出都在里面；关掉回到播放页
+        share?.let { session ->
+            ShareOverlay(
+                session = session,
+                state = state,
+                actions = actions,
+                active = active,
+                currentKey = song.key,
+                onClose = { share = null },
+            )
+        }
         HeartBurst(burst, heartBurstPlacement(window.fold, book, tabletop))
         if (animationOpen) {
             AnimationSheet(
@@ -451,7 +501,9 @@ internal fun MoreMenu(
 ) {
     var open by remember { mutableStateOf(false) }
     var lyricsSizeOpen by rememberSaveable { mutableStateOf(false) }
-    KeepPlayerAwake(idle, open || lyricsSizeOpen)
+    // 「加到歌单」面板：打开那一刻的这首。面板开着时切了歌，勾的还是打开时那首
+    var playlistOpen by rememberSaveable { mutableStateOf(false) }
+    KeepPlayerAwake(idle, open || lyricsSizeOpen || playlistOpen)
     Box {
         IconButton(onClick = { open = true }) { Icon(Icons.Filled.MoreVert, "更多", tint = MaterialTheme.colorScheme.onSurface) }
         DropdownMenu(open, onDismissRequest = { open = false }, shape = RoundedCornerShape(20.dp)) {
@@ -460,6 +512,11 @@ internal fun MoreMenu(
             // 收起播放页，露出队列海报墙
             DropdownMenuItem(text = { Text("海报墙") }, leadingIcon = { Icon(Icons.Filled.GridView, null) }, onClick = { open = false; actions.openPosterWall() })
             DropdownMenuItem(text = { Text("选择音源") }, leadingIcon = { Icon(Icons.Filled.SwapHoriz, null) }, onClick = { open = false; onOpenSource() })
+            DropdownMenuItem(
+                text = { Text("加到歌单…") },
+                leadingIcon = { Icon(Icons.AutoMirrored.Filled.PlaylistAdd, null) },
+                onClick = { open = false; playlistOpen = true },
+            )
             // 收起播放页，打开歌手页 / 专辑页；直播（电台）没有这两项
             if (!song.isLive) {
                 splitArtistNames(song.artist).take(3).forEach { name ->
@@ -484,6 +541,7 @@ internal fun MoreMenu(
         }
     }
     if (lyricsSizeOpen) LyricsSizeSheet(actions, onDismiss = { lyricsSizeOpen = false })
+    if (playlistOpen) AddToPlaylistSheet(song = song, actions = actions, onDismiss = { playlistOpen = false })
 }
 
 /**

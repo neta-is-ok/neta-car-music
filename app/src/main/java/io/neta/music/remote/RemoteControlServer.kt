@@ -30,6 +30,7 @@ internal class RemoteControlServer(private val app: MyMusicApp) : NanoHTTPD(null
         val uri = session.uri.orEmpty()
         return when {
             session.method == Method.GET && (uri == "/" || uri == "/index.html" || uri == "/input") -> asset()
+            session.method == Method.GET && uri.startsWith("/transfer/") -> transferFile(uri.removePrefix("/transfer/"))
             session.method == Method.GET && uri == "/api/state" -> state()
             session.method == Method.GET && uri == "/api/search" -> search(session)
             session.method == Method.POST && uri == "/api/play" -> withBody(session, ::play)
@@ -41,6 +42,26 @@ internal class RemoteControlServer(private val app: MyMusicApp) : NanoHTTPD(null
             session.method == Method.POST && uri == "/api/input" -> withBody(session, ::input)
             else -> json(Response.Status.NOT_FOUND, JSONObject().put("success", false).put("message", "接口不存在"))
         }
+    }
+
+    /**
+     * 「扫码下载」的文件出口：`GET /transfer/<文件名>`，文件来自 cache/exports（歌单导出）。
+     * 只按名字取、不允许路径分隔符，扫不存在的名字给 404——不给局域网之外的任何探索空间。
+     */
+    private fun transferFile(name: String): Response {
+        if (name.isBlank() || name.contains('/') || name.contains('\\') || name.contains("..")) {
+            return json(Response.Status.NOT_FOUND, JSONObject().put("success", false).put("message", "文件不存在"))
+        }
+        val file = java.io.File(java.io.File(app.cacheDir, "exports"), name)
+        if (!file.isFile) {
+            return json(Response.Status.NOT_FOUND, JSONObject().put("success", false).put("message", "文件不存在或已清理"))
+        }
+        val mime = if (name.endsWith(".json")) "application/json" else "application/octet-stream"
+        return newFixedLengthResponse(Response.Status.OK, mime, file.inputStream(), file.length())
+            .apply {
+                addHeader("Content-Disposition", "attachment; filename=\"$name\"")
+                noStore()
+            }
     }
 
     private fun asset(): Response {

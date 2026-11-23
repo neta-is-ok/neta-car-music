@@ -108,6 +108,7 @@ import io.neta.music.ui.MusicUiState
 import io.neta.music.ui.PlaylistPickerSheet
 import io.neta.music.ui.TrackActionsSheet
 import io.neta.music.ui.components.AppLoading
+import io.neta.music.ui.components.rememberRowSwipe
 import io.neta.music.ui.components.LocalAppWindow
 import io.neta.music.ui.components.PageScaffold
 import io.neta.music.ui.components.SectionLabel
@@ -513,6 +514,7 @@ private fun FeaturedChart(
                 { selection.enter(song.key) }
             }
             SongRow(
+                swipe = rememberRowSwipe(song, songs, enabled = !picking),
                 title = song.title,
                 subtitle = song.subtitle,
                 cover = song.cover,
@@ -990,6 +992,7 @@ internal fun SongActionsSheet(
             onDismiss()
             actions.openSourceForSong(target.song, target.queue)
         },
+        onCollect = { actions.collectOnPlatform(target.song) },
         onRemoveFromPlaylist = null,
         onDismiss = onDismiss,
         onWallLocate = onWallLocate,

@@ -29,11 +29,16 @@ import org.json.JSONObject
  * - play：keyword 搜索后播放首个结果，可带 source 指定平台；也可传 source + song_id，
  *   或 song_json（data.Song 的 JSON，保留平台需要的 extra 等信息）。ID 方式可带 title / artist。
  *   已有播放队列时插播到当前歌曲之后并立即切过去，唱完接着放原列表；没有队列才新建单曲队列。
+ * - play_queue：连续播放队列（MCP play_music_queue 的广播版）。keyword 填歌手名或风格 /
+ *   心情 / 场景关键词，kind 填 artist（歌手多曲）或 genre（风格歌单）；可选 source 指定平台、
+ *   limit 限定队列长度（1-100，默认 30）、shuffle（只在明确要求随机或顺序时携带，省略保留设置）。
+ *   新队列完整替换当前队列，保留用户循环模式。与 play 一样转交播放服务异步执行：
+ *   先回 accepted，completed 回执额外带 queue_size / queue_kind / queue_keyword。
  *
  * 可选 result_receiver（平台 ResultReceiver）直接回传结果；未提供时仍发普通结果广播，
  * 默认 action = io.neta.music.action.RESULT，reply_action / reply_package 可指定回传目标。
  * request_id 原样回传。每次结果含 command、success、status（completed / error / accepted）；
- * 状态含 has_song、song_id、source、title、artist、favorite、mode、repeat_mode、shuffle、playing。
+ * 状态含 has_song、song_id、source、title、artist、favorite、mode、repeat_mode、shuffle、playing、queue_size。
  * 没有当前歌曲时 has_song=false，不带歌曲信息和 favorite。失败含 message。
  *
  * 有序广播同时以 resultExtras 和 JSON resultData 返回，resultCode=-1 成功、0 失败。
@@ -61,7 +66,7 @@ class PlaybackBroadcastReceiver : BroadcastReceiver() {
         app.appScope.launch {
             try {
                 val result = try {
-                    if (intent.getStringExtra("command") == "play") {
+                    if (PlaybackBroadcast.isPlayRequest(intent.getStringExtra("command"))) {
                         // 搜索 / 取流可能超过接收器的存活时间，交给现有播放服务，不在这里挂着 goAsync。
                         ContextCompat.startForegroundService(
                             app,
@@ -109,29 +114,32 @@ internal object PlaybackBroadcast {
         PlaybackControl.failure(IllegalArgumentException("播放控制请求格式不兼容，请更新发送请求的应用"))
     }
 
-    suspend fun execute(app: MyMusicApp, intent: Intent): Bundle {
-        require(intent.getStringExtra("command") != "play_queue") { "连续播放队列仅支持通过 MCP 调用" }
-        return PlaybackControl.execute(
-            app,
-            PlaybackControlRequest(
-                command = intent.getStringExtra("command").orEmpty(),
-                keyword = intent.getStringExtra("keyword").orEmpty(),
-                source = intent.getStringExtra("source").orEmpty(),
-                songId = intent.getStringExtra("song_id").orEmpty(),
-                songJson = intent.getStringExtra("song_json").orEmpty(),
-                title = intent.getStringExtra("title").orEmpty(),
-                artist = intent.getStringExtra("artist").orEmpty(),
-                mode = intent.getStringExtra("mode").orEmpty(),
-                requestId = playRequestId(intent).orEmpty(),
-            ),
-        )
-    }
+    suspend fun execute(app: MyMusicApp, intent: Intent): Bundle = PlaybackControl.execute(
+        app,
+        PlaybackControlRequest(
+            command = intent.getStringExtra("command").orEmpty(),
+            keyword = intent.getStringExtra("keyword").orEmpty(),
+            source = intent.getStringExtra("source").orEmpty(),
+            songId = intent.getStringExtra("song_id").orEmpty(),
+            songJson = intent.getStringExtra("song_json").orEmpty(),
+            title = intent.getStringExtra("title").orEmpty(),
+            artist = intent.getStringExtra("artist").orEmpty(),
+            queueKind = intent.getStringExtra("kind").orEmpty(),
+            limit = intent.getIntExtra("limit", 30),
+            shuffle = if (intent.hasExtra("shuffle")) intent.getBooleanExtra("shuffle", false) else null,
+            mode = intent.getStringExtra("mode").orEmpty(),
+            requestId = playRequestId(intent).orEmpty(),
+        ),
+    )
+
+    /** 点播类命令：搜索和取流可能超过接收器存活时间，一律转交播放服务执行，接收器只回 accepted。 */
+    fun isPlayRequest(command: String?) = command == "play" || command == "play_queue"
 
     fun reply(context: Context, request: Intent, result: Bundle) {
         result.putString("command", request.getStringExtra("command").orEmpty())
         request.getStringExtra("request_id")?.let { result.putString("request_id", it) }
         logPlayEvent(request, result.getString("status").orEmpty(), result)
-        if (result.getString("status") == "error" && request.getStringExtra("command") == "play" &&
+        if (result.getString("status") == "error" && isPlayRequest(request.getStringExtra("command")) &&
             awaitingPlaybackId == playRequestId(request)
         ) {
             awaitingPlaybackId = null
@@ -186,20 +194,20 @@ internal object PlaybackBroadcast {
         ?.takeIf { it.isNotBlank() && it.length <= 128 }
 
     /**
-     * 系统 INFO 事件 v1：只观察带 request_id 的 play，不改变回执或播放行为。
+     * 系统 INFO 事件 v1：只观察带 request_id 的点播（play / play_queue），不改变回执或播放行为。
      * 美式按请求和目标用户关联；没有读到日志时仍以已发送结束，不因此等待或重发。
      */
     private fun logPlayEvent(request: Intent, phase: String, result: Bundle?) {
-        if (request.getStringExtra("command") != "play") return
+        if (!isPlayRequest(request.getStringExtra("command"))) return
         val requestId = playRequestId(request) ?: return
-        logPlayEvent(requestId, phase, result)
+        logPlayEvent(requestId, phase, result, request.getStringExtra("command").orEmpty())
     }
 
-    private fun logPlayEvent(requestId: String, phase: String, result: Bundle?) {
+    private fun logPlayEvent(requestId: String, phase: String, result: Bundle?, command: String = "play") {
         if (phase !in setOf("received", "accepted", "completed", "playing", "error")) return
         val event = JSONObject()
             .put("v", 1)
-            .put("command", "play")
+            .put("command", command)
             .put("request_id", requestId)
             .put("user_id", Process.myUid() / 100000)
             .put("phase", phase)

@@ -199,12 +199,30 @@ class MusicActions(private val model: MusicViewModel) {
     val position: kotlinx.coroutines.flow.StateFlow<Long> get() = model.position
     fun clearQueue() = model.clearQueue()
     fun favorite(song: Song) = model.toggleFavorite(song)
+    /** 收藏到平台账号（汽水的「我喜欢的音乐」）；平台没实现或没登录时由界面提示。 */
+    fun collectOnPlatform(song: Song) = model.collectOnPlatform(song)
     fun download(song: Song) = model.download(song)
+
+    val localPlaylists: kotlinx.coroutines.flow.StateFlow<List<LocalPlaylistSummary>> get() = model.localPlaylists
+    val favorites: kotlinx.coroutines.flow.StateFlow<List<io.neta.music.data.SavedSong>> get() = model.favorites
+    val transfer: kotlinx.coroutines.flow.StateFlow<TransferUi> get() = model.transfer
+    suspend fun exportPreview(ids: List<String>) = model.exportPreview(ids)
+    suspend fun exportFile(preview: io.neta.music.data.transfer.ExportPreview) = model.exportFile(preview)
+    fun applyImport(choices: Map<String, io.neta.music.data.transfer.ImportChoice>) = model.applyImport(choices)
+    fun recheckImport() = model.recheckImport()
+    fun dismissImport() = model.dismissImport()
+    suspend fun prepareQrExport(preview: io.neta.music.data.transfer.ExportPreview) = model.prepareQrExport(preview)
+    fun shareExport(preview: io.neta.music.data.transfer.ExportPreview) = model.shareExport(preview)
+    fun addToQueue(song: Song) = model.addToQueue(song)
+    fun setSwipePrefs(transform: (io.neta.music.data.SwipePrefs) -> io.neta.music.data.SwipePrefs) = model.setSwipePrefs(transform)
+    fun setSharePrefs(transform: (io.neta.music.data.SharePrefs) -> io.neta.music.data.SharePrefs) = model.setSharePrefs(transform)
+    fun saveExport(preview: io.neta.music.data.transfer.ExportPreview, uri: android.net.Uri) = model.saveExport(preview, uri)
     fun openDeepLink() = model.openDeepLink()
     fun clearError() = model.clearError()
     fun clearNotice() = model.clearNotice()
 
     fun createPlaylist(name: String) = model.createPlaylist(name)
+    fun createPlaylistWithSong(name: String, song: Song) = model.createPlaylistWithSong(name, song)
     fun renamePlaylist(id: String, name: String) = model.renamePlaylist(id, name)
     fun deletePlaylist(id: String) = model.deletePlaylist(id)
     fun addSongToPlaylist(id: String, song: Song) = model.addSongToPlaylist(id, song)
@@ -338,6 +356,7 @@ class MusicActions(private val model: MusicViewModel) {
     suspend fun checkUpdatesNow(): io.neta.music.data.update.UpdateUiState = model.checkForUpdatesNow()
     fun downloadUpdate() = model.downloadUpdate()
     fun backgroundUpdate() = model.backgroundUpdate()
+    fun dismissUpdate() = model.dismissUpdate()
     fun installUpdate() = model.installUpdate()
     fun openInstallPermission() = model.openInstallPermission()
     fun openReleasePage() = model.openReleasePage()
@@ -627,6 +646,8 @@ fun TrackActionsSheet(
      * （歌曲信息只在本地音乐页里），选好的匹配记进线索表并同步回有文件的设备。非本地歌为 null。
      */
     onRematch: (() -> Unit)? = null,
+    /** 收藏到平台账号（汽水的「我喜欢的音乐」）；平台没有这个能力时为 null，不显示这一行。 */
+    onCollect: (() -> Unit)? = null,
     /** “查看歌手：某某”，每位歌手一行（最多 3 位）；参数是点的那位歌手名。 */
     onOpenArtist: ((String) -> Unit)? = null,
     /** “查看专辑：某某”。歌曲没有专辑名时不显示。 */
@@ -669,6 +690,7 @@ fun TrackActionsSheet(
                 }?.let { SheetRow(Icons.Filled.Album, "查看专辑：${song.album}", false, it) }
                 val rows = artistRows + listOfNotNull(
                     albumRow,
+                    onCollect?.let { SheetRow(Icons.Filled.FavoriteBorder, "收藏到账号", false, it) },
                     onRematch?.let { SheetRow(Icons.Filled.FindReplace, "换一个匹配", false, it) },
                     onOpenSource?.let { SheetRow(Icons.Filled.SwapHoriz, "选择音源 / 查看其他版本", false, it) },
                     onMerge?.let { SheetRow(Icons.AutoMirrored.Filled.CallMerge, "合并到…", false, it) },

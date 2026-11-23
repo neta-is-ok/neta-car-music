@@ -17,10 +17,19 @@ from datetime import datetime, timezone
 ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY = "neta-is-ok/neta-car-music"
 
+# GBK 控制台编码不了证书 DN 里的个别字符（如 \u07f8）：换字节显示成 ? 就行，别让 print 中断发布
+for stream in (sys.stdout, sys.stderr):
+    stream.reconfigure(errors="replace")
+
+
+GRADLEW = "gradlew.bat" if os.name == "nt" else "./gradlew"
+
 
 def command(*args, timeout=None):
     return subprocess.run(
         args, cwd=ROOT, check=True, text=True, capture_output=True, timeout=timeout,
+        # Windows 上的 apksigner.bat 输出是 GBK，关键字段（DN / SHA-256）是 ASCII，坏字节替换掉不影响核对
+        encoding="utf-8", errors="replace",
     ).stdout.strip()
 
 
@@ -103,7 +112,7 @@ def prepare(notes_path):
     min_sdk = int(re.search(r'^minSdk = "(\d+)"', versions, re.MULTILINE).group(1))
     print(f"本地编译并签名 {tag}……", flush=True)
     subprocess.run(
-        ["./gradlew", ":app:assembleRelease", "--max-workers=1", f"-PreleaseRepository={REPOSITORY}"],
+        [GRADLEW, ":app:assembleRelease", "--max-workers=1", f"-PreleaseRepository={REPOSITORY}"],
         cwd=ROOT, check=True, env={**os.environ, "KEYSTORE": str(ROOT / "keystore.jks")},
     )
     output = ROOT / "app/build/outputs/apk/release"
@@ -114,7 +123,8 @@ def prepare(notes_path):
         "io.neta.music", name, code, apk_name,
     ):
         raise ValueError("APK 包名或版本与本次发布不一致")
-    signature = command(str(Path(sdk) / "build-tools" / build_tools / "apksigner"),
+    apksigner = Path(sdk) / "build-tools" / build_tools / ("apksigner.bat" if os.name == "nt" else "apksigner")
+    signature = command(str(apksigner),
                         "verify", "--print-certs", str(output / apk_name))
     if "CN=Android Debug" in signature:
         raise ValueError("不能发布 debug 签名 APK")

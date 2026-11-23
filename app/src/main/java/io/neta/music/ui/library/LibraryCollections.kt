@@ -82,6 +82,8 @@ import io.neta.music.ui.adaptive.LocalFoldPane
 import io.neta.music.ui.adaptive.bottom
 import io.neta.music.ui.adaptive.top
 import io.neta.music.ui.components.LocalAppWindow
+import io.neta.music.ui.components.SwipeDelete
+import io.neta.music.ui.components.rememberRowSwipe
 import io.neta.music.ui.components.PageScaffold
 import io.neta.music.ui.components.SegmentGap
 import io.neta.music.ui.components.SkeletonRows
@@ -184,6 +186,14 @@ fun FavoritesScreen(
             val display = localDisplay(song)
             val local = localCopies(song)
             SongRow(
+                // 收藏里「删除」就是取消收藏（和行尾的心一样带撤销）；两个都露出来时只留一个
+                swipe = rememberRowSwipe(
+                    song,
+                    songs,
+                    delete = SwipeDelete("取消收藏", "取消收藏", sameAsUnfavorite = true) { unfavorite(saved, song) },
+                ),
+                // 行尾的心本身是按钮：悬停按钮插在它前面，不替换
+                hoverReplacesTrailing = false,
                 title = display.title,
                 subtitle = if (local != null) localSubtitle(display, local) else listOf(song.artist, sourceLabel(song)).filter { it.isNotBlank() }.joinToString(" · "),
                 cover = display.cover,
@@ -248,6 +258,7 @@ fun FavoritesScreen(
                 actionSong = null
                 actions.openSourceForSong(song, songs)
             },
+            onCollect = { actions.collectOnPlatform(song) },
             onRemoveFromPlaylist = null,
             onDismiss = { actionSong = null },
             onRematch = if (song.source == LOCAL_SOURCE) ({ actionSong = null; unplayable.rematch = song }) else null,
@@ -428,6 +439,7 @@ fun HistoryScreen(
                 actionSong = null
                 actions.openSourceForSong(song, queue)
             },
+            onCollect = { actions.collectOnPlatform(song) },
             onRemoveFromPlaylist = null,
             onDismiss = { actionSong = null },
             onRematch = if (song.source == LOCAL_SOURCE) ({ actionSong = null; unplayable.rematch = song }) else null,

@@ -229,6 +229,12 @@ data class MusicUiState(
     val autoLyricsIdle: Boolean = true,
     /** 主界面多少秒无操作后自动进歌词页。 */
     val autoLyricsIdleSeconds: Int = 30,
+    /** 方控右键（媒体下一曲）双击切播放/暂停的总开关，见 [AppSettings.swcDoubleNextEnabled]。 */
+    val swcDoubleNextEnabled: Boolean = true,
+    /** 方控双击判定间隔（毫秒），左右两个双击共用。 */
+    val swcDoubleTapWindowMs: Int = 800,
+    /** 方控左键（媒体上一曲）双击循环切换循环模式的开关。 */
+    val swcDoublePrevRepeatEnabled: Boolean = true,
     /** 歌单页上次用的浏览方式；还没读到设置时是默认的「推荐」。 */
     val playlistsMode: PlaylistMode = PlaylistMode.Recommend,
     /** 听歌模式页上次选的分组，空表示「全部」。 */
@@ -605,6 +611,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             autoPlayOnLaunch = settings.autoPlayOnLaunch,
             autoLyricsIdle = settings.autoLyricsIdle,
             autoLyricsIdleSeconds = settings.autoLyricsIdleSeconds,
+            swcDoubleNextEnabled = settings.swcDoubleNextEnabled,
+            swcDoubleTapWindowMs = settings.swcDoubleTapWindowMs,
+            swcDoublePrevRepeatEnabled = settings.swcDoublePrevRepeatEnabled,
             playlistsMode = settings.playlistsMode.toPlaylistMode(),
             listenGroup = settings.listenGroup.ifBlank { "全部" },
             theme = settings.theme,
@@ -6270,6 +6279,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun setAutoPlayOnLaunch(value: Boolean) = viewModelScope.launch { app.settings.autoPlayOnLaunch(value) }
     fun setAutoLyricsIdle(value: Boolean) = viewModelScope.launch { app.settings.autoLyricsIdle(value) }
     fun setAutoLyricsIdleSeconds(value: Int) = viewModelScope.launch { app.settings.autoLyricsIdleSeconds(value) }
+    fun setSwcDoubleNextEnabled(value: Boolean) = viewModelScope.launch { app.settings.swcDoubleNextEnabled(value) }
+    fun setSwcDoubleTapWindowMs(value: Int) = viewModelScope.launch { app.settings.swcDoubleTapWindowMs(value) }
+    fun setSwcDoublePrevRepeat(value: Boolean) = viewModelScope.launch { app.settings.swcDoublePrevRepeat(value) }
 
     /**
      * 音乐源开关。关掉的平台从启用列表和优先列表里一起消失：聚合搜索、来源条、换源都不再用它，

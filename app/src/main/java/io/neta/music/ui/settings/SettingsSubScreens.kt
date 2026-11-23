@@ -52,8 +52,10 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Lyrics
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.filled.Tune
@@ -119,6 +121,8 @@ import io.neta.music.aggregate.MatchStrictness
 import io.neta.music.aggregate.PlaybackMode
 import io.neta.music.data.CrossfadeAnimation
 import io.neta.music.data.CrossfadeMode
+import io.neta.music.data.SWC_DOUBLE_WINDOW_MAX_MS
+import io.neta.music.data.SWC_DOUBLE_WINDOW_MIN_MS
 import io.neta.music.data.native.AudioQuality
 import io.neta.music.data.ProviderInfo
 import io.neta.music.data.lx.LxPlatform
@@ -576,6 +580,41 @@ internal fun PlaybackSettingsScreen(
                 summary = "打开应用后，从上次的歌曲和进度继续播放",
                 icon = Icons.Filled.MusicNote,
             )
+        }
+        item(key = "swcHead", contentType = "sectionHeader") { SectionLabel("方向盘控制") }
+        item(key = "swcNext", contentType = "switch") {
+            SwitchRow(
+                title = "双击方控右键：播放 / 暂停",
+                checked = state.swcDoubleNextEnabled,
+                onCheckedChange = actions::setSwcDoubleNextEnabled,
+                index = 0,
+                count = 2,
+                summary = "判定间隔内连按两次方控右键切换播放/暂停；单击仍是普通切歌，但要等间隔结束才执行",
+                icon = Icons.Filled.PlayArrow,
+            )
+        }
+        item(key = "swcPrev", contentType = "switch") {
+            SwitchRow(
+                title = "双击方控左键：切换循环模式",
+                checked = state.swcDoublePrevRepeatEnabled,
+                onCheckedChange = actions::setSwcDoublePrevRepeat,
+                index = 1,
+                count = 2,
+                summary = "判定间隔内连按两次方控左键，在 顺序播放 → 列表循环 → 单曲循环 间切换；单击行为不变。间隔和上一项共用",
+                icon = Icons.Filled.Repeat,
+            )
+        }
+        if (state.swcDoubleNextEnabled || state.swcDoublePrevRepeatEnabled) {
+            item(key = "swcWindow", contentType = "sizeSlider") {
+                AppearanceSizeSlider(
+                    title = "双击判定间隔",
+                    value = state.swcDoubleTapWindowMs,
+                    range = SWC_DOUBLE_WINDOW_MIN_MS..SWC_DOUBLE_WINDOW_MAX_MS,
+                    step = 100,
+                    unit = " 毫秒",
+                    onChange = actions::setSwcDoubleTapWindowMs,
+                )
+            }
         }
         item(key = "autoLyricsHead", contentType = "sectionHeader") { SectionLabel("自动进入歌词页") }
         item(key = "autoLyricsSwitch", contentType = "switch") {

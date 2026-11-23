@@ -74,6 +74,10 @@ private fun String?.toRhythmIntensity(): RhythmIntensity =
 /** 跟拍校准的范围（毫秒）。 */
 const val RHYTHM_OFFSET_MAX_MS = 200
 
+/** 方控双击判定间隔的夹紧范围（毫秒）。 */
+const val SWC_DOUBLE_WINDOW_MIN_MS = 200
+const val SWC_DOUBLE_WINDOW_MAX_MS = 2000
+
 /** 播放页歌词下面那一行（经典列表的第二行、其他动画模式的宿主副行）放什么。没有罗马音时“罗马音”回退成翻译。 */
 enum class LyricSubline { Translation, Romanization, Both }
 
@@ -221,6 +225,10 @@ class SettingsStore(private val context: Context) {
     /** 主界面长时间无操作且在播放时自动进入歌词页；闲置多少秒算“长时间无操作”见 [autoLyricsIdleSecondsKey]。 */
     private val autoLyricsIdleKey = booleanPreferencesKey("auto_lyrics_idle")
     private val autoLyricsIdleSecondsKey = intPreferencesKey("auto_lyrics_idle_seconds")
+    // 方控（SWC 广播）双击：右键双击切播放/暂停（间隔可调），左键双击切循环模式
+    private val swcDoubleNextEnabledKey = booleanPreferencesKey("swc_double_next_enabled")
+    private val swcDoubleTapWindowMsKey = intPreferencesKey("swc_double_tap_window_ms")
+    private val swcDoublePrevRepeatKey = booleanPreferencesKey("swc_double_prev_repeat")
     private val cacheLimitKey = intPreferencesKey("cache_limit_mb")
     private val lyricsBackgroundKey = stringPreferencesKey("lyrics_background")
     private val notificationLyricsKey = booleanPreferencesKey("notification_lyrics")
@@ -356,6 +364,10 @@ class SettingsStore(private val context: Context) {
             crossfadeMode = values[crossfadeModeKey] ?: CrossfadeMode.Automix.name,
             autoLyricsIdle = values[autoLyricsIdleKey] ?: true,
             autoLyricsIdleSeconds = (values[autoLyricsIdleSecondsKey] ?: 30).coerceIn(15, 120),
+            swcDoubleNextEnabled = values[swcDoubleNextEnabledKey] ?: true,
+            swcDoubleTapWindowMs = (values[swcDoubleTapWindowMsKey] ?: 800)
+                .coerceIn(SWC_DOUBLE_WINDOW_MIN_MS, SWC_DOUBLE_WINDOW_MAX_MS),
+            swcDoublePrevRepeatEnabled = values[swcDoublePrevRepeatKey] ?: true,
             cacheLimitMb = values[cacheLimitKey] ?: 0,
         )
     }
@@ -428,6 +440,11 @@ class SettingsStore(private val context: Context) {
         context.dataStore.edit { it[crossfadeModeKey] = value.name }
     suspend fun autoLyricsIdle(value: Boolean) = context.dataStore.edit { it[autoLyricsIdleKey] = value }
     suspend fun autoLyricsIdleSeconds(value: Int) = context.dataStore.edit { it[autoLyricsIdleSecondsKey] = value.coerceIn(15, 120) }
+    suspend fun swcDoubleNextEnabled(value: Boolean) = context.dataStore.edit { it[swcDoubleNextEnabledKey] = value }
+    suspend fun swcDoubleTapWindowMs(value: Int) = context.dataStore.edit {
+        it[swcDoubleTapWindowMsKey] = value.coerceIn(SWC_DOUBLE_WINDOW_MIN_MS, SWC_DOUBLE_WINDOW_MAX_MS)
+    }
+    suspend fun swcDoublePrevRepeat(value: Boolean) = context.dataStore.edit { it[swcDoublePrevRepeatKey] = value }
     suspend fun cacheLimitMb(value: Int) = context.dataStore.edit { it[cacheLimitKey] = value }
 
     /** 墙内设置：在同一次 edit 里读出当前值再写回，连着点两个开关也不会互相覆盖。 */
@@ -757,6 +774,15 @@ data class AppSettings(
     val autoLyricsIdle: Boolean = true,
     /** 主界面多少秒无操作后自动进歌词页。 */
     val autoLyricsIdleSeconds: Int = 30,
+    /**
+     * 方控右键（媒体下一曲）双击切播放/暂停：判定间隔内连按两次切换，单击仍切歌但要等间隔过了才执行。
+     * 关掉后每次按键立即切歌。
+     */
+    val swcDoubleNextEnabled: Boolean = true,
+    /** 方控双击的判定间隔（毫秒），左右两个双击共用。 */
+    val swcDoubleTapWindowMs: Int = 800,
+    /** 方控左键（媒体上一曲）双击按 顺序播放 → 列表循环 → 单曲循环 循环切换，顺序和播放页循环按钮一致。 */
+    val swcDoublePrevRepeatEnabled: Boolean = true,
     /** 播放缓存上限（MB），0 表示按设备默认：电视 256，其他 512。 */
     val cacheLimitMb: Int = 0,
 )

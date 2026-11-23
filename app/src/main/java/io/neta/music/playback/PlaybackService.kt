@@ -64,6 +64,7 @@ class PlaybackService : MediaSessionService() {
     private var metadataFavorites: Set<String>? = null
     private var metadataJob: Job? = null
     private var sessionLyricsJob: Job? = null
+    private var swcSettingsJob: Job? = null
     private var sessionLyrics = SessionLyricsSnapshot()
     private var publishedLyrics: SessionLyricsPublication? = null
     private var crossfade: CrossfadeController? = null
@@ -218,6 +219,16 @@ class PlaybackService : MediaSessionService() {
         carMedia = NetaMediaController(this, handler).also {
             app?.carMedia = it
             it.start(primary)
+        }
+        // 方控双击的开关和间隔在设置里改，服务里跟着同步
+        swcSettingsJob = app?.appScope?.launch {
+            app.settings.state.collect { settings ->
+                carMedia?.updateDoubleTap(
+                    settings.swcDoubleNextEnabled,
+                    settings.swcDoubleTapWindowMs,
+                    settings.swcDoublePrevRepeatEnabled,
+                )
+            }
         }
         sessionLyricsJob = app?.appScope?.launch {
             app.musicViewModel.sessionLyrics.collect { snapshot ->
@@ -428,6 +439,8 @@ class PlaybackService : MediaSessionService() {
         metadataJob = null
         sessionLyricsJob?.cancel()
         sessionLyricsJob = null
+        swcSettingsJob?.cancel()
+        swcSettingsJob = null
         sessionLyrics = SessionLyricsSnapshot()
         publishedLyrics = null
         broadcastStartId = -1

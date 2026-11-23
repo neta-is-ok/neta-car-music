@@ -9,8 +9,10 @@ import android.media.AudioManager
 import android.media.AudioPlaybackConfiguration
 import android.os.Build
 import android.os.Handler
+import android.os.SystemClock
 import android.provider.Settings
 import android.view.KeyEvent
+import android.widget.Toast
 import androidx.annotation.RequiresApi
 import androidx.core.content.ContextCompat
 import androidx.media3.common.MediaItem
@@ -28,10 +30,31 @@ internal class NetaMediaController(private val context: Context, private val han
     private var resumePending = false
     private var lastKnownMute: Boolean? = null
     private var playbackObserver: PlaybackObserver? = null
+    private var lastNextTapAt = 0L
+    private var lastPrevTapAt = 0L
+    private var pendingNext: Runnable? = null
+    private var pendingPrev: Runnable? = null
 
     var isMuted: Boolean? = null
         private set
     val isPausedForMute: Boolean get() = resumePending
+
+    /** 方控双击设置，由服务从设置流同步；间隔改了只影响下一次按键，等着的单击任务照旧跑完。 */
+    var doubleNextEnabled = true
+        private set
+    var doubleTapWindowMs = 800
+        private set
+    var doublePrevRepeatEnabled = true
+        private set
+
+    fun updateDoubleTap(nextEnabled: Boolean, windowMs: Int, prevRepeat: Boolean) {
+        doubleNextEnabled = nextEnabled
+        doubleTapWindowMs = windowMs
+        doublePrevRepeatEnabled = prevRepeat
+        // 关掉开关就不再等第二击，把还挂着的单击任务当场执行，切歌立刻恢复不用等
+        if (!nextEnabled) flushPendingNext()
+        if (!prevRepeat) flushPendingPrev()
+    }
 
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -118,6 +141,12 @@ internal class NetaMediaController(private val context: Context, private val han
     }
 
     fun stop() {
+        pendingNext?.let(handler::removeCallbacks)
+        pendingPrev?.let(handler::removeCallbacks)
+        pendingNext = null
+        pendingPrev = null
+        lastNextTapAt = 0
+        lastPrevTapAt = 0
         if (started) {
             context.unregisterReceiver(receiver)
             context.contentResolver.unregisterContentObserver(muteObserver)
@@ -148,13 +177,88 @@ internal class NetaMediaController(private val context: Context, private val han
         val current = player ?: return
         cancelResume()
         when (key) {
-            KeyEvent.KEYCODE_MEDIA_NEXT -> current.seekToNextMediaItem()
-            KeyEvent.KEYCODE_MEDIA_PREVIOUS -> current.seekToPreviousMediaItem()
+            KeyEvent.KEYCODE_MEDIA_NEXT -> if (doubleNextEnabled) tapNext() else current.seekToNextMediaItem()
+            KeyEvent.KEYCODE_MEDIA_PREVIOUS -> if (doublePrevRepeatEnabled) tapPrevious() else current.seekToPreviousMediaItem()
             KeyEvent.KEYCODE_MEDIA_PAUSE -> current.pause()
             KeyEvent.KEYCODE_MEDIA_PLAY -> play(current)
             KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> if (current.playWhenReady) current.pause() else play(current)
         }
         AppLog.i("NetaMedia", "方控 keyCode=$key")
+    }
+
+    /**
+     * 方控右键（媒体下一曲）双击判定：第一击先记账等一个间隔，间隔内来了第二击就改走双击动作；
+     * 没等到第二击，到点补执行单击动作。所以单击切歌会晚一个间隔才发生，这是判定双击的必要代价。
+     * 补执行时重新过 [canControl]：等的那段时间里可能已经让出了媒体。
+     */
+    private fun tapNext() {
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastNextTapAt <= doubleTapWindowMs) {
+            lastNextTapAt = 0
+            pendingNext?.let(handler::removeCallbacks)
+            pendingNext = null
+            val current = player ?: return
+            cancelResume()
+            if (current.playWhenReady) current.pause() else play(current)
+            AppLog.i("NetaMedia", "方控右键双击，切换播放/暂停")
+            return
+        }
+        lastNextTapAt = now
+        pendingNext?.let(handler::removeCallbacks)
+        pendingNext = Runnable {
+            pendingNext = null
+            if (!canControl()) return@Runnable
+            cancelResume()
+            player?.seekToNextMediaItem()
+        }.also { handler.postDelayed(it, doubleTapWindowMs.toLong()) }
+    }
+
+    /** 方控左键（媒体上一曲）双击，同 [tapNext]；双击动作换成循环切换循环模式，顺序和播放页的循环按钮一致。 */
+    private fun tapPrevious() {
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastPrevTapAt <= doubleTapWindowMs) {
+            lastPrevTapAt = 0
+            pendingPrev?.let(handler::removeCallbacks)
+            pendingPrev = null
+            val current = player ?: return
+            cancelResume()
+            current.repeatMode = when (current.repeatMode) {
+                Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL
+                Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
+                else -> Player.REPEAT_MODE_OFF
+            }
+            // 开车时看不清播放页的循环按钮状态，切完给个提示
+            val label = when (current.repeatMode) {
+                Player.REPEAT_MODE_ALL -> "列表循环"
+                Player.REPEAT_MODE_ONE -> "单曲循环"
+                else -> "顺序播放"
+            }
+            Toast.makeText(context, "循环模式：$label", Toast.LENGTH_SHORT).show()
+            AppLog.i("NetaMedia", "方控左键双击，切换循环模式")
+            return
+        }
+        lastPrevTapAt = now
+        pendingPrev?.let(handler::removeCallbacks)
+        pendingPrev = Runnable {
+            pendingPrev = null
+            if (!canControl()) return@Runnable
+            cancelResume()
+            player?.seekToPreviousMediaItem()
+        }.also { handler.postDelayed(it, doubleTapWindowMs.toLong()) }
+    }
+
+    private fun flushPendingNext() {
+        val pending = pendingNext ?: return
+        handler.removeCallbacks(pending)
+        pendingNext = null
+        pending.run()
+    }
+
+    private fun flushPendingPrev() {
+        val pending = pendingPrev ?: return
+        handler.removeCallbacks(pending)
+        pendingPrev = null
+        pending.run()
     }
 
     private fun play(player: Player) {

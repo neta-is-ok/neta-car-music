@@ -62,7 +62,7 @@ internal class MusicMcpServer(private val app: MyMusicApp) : NanoHTTPD("127.0.0.
                     .put("serverInfo", JSONObject().put("name", NAME).put("version", BuildConfig.VERSION_NAME))
                     .put(
                         "instructions",
-                        "通过吒友爱听点歌。明确点一首歌时调用 play_song；用户想连续听某位歌手、某种风格、心情或场景的多首歌曲时调用 play_music_queue；get_playback_state 查询当前歌曲和播放状态。",
+                        "通过吒友爱听点歌和管理当前播放。明确点一首歌时调用 play_song；用户想连续听某位歌手、某种风格、心情或场景的多首歌曲时调用 play_music_queue；用户说喜欢当前歌曲、要收藏当前歌曲时调用 favorite_song；get_playback_state 查询当前歌曲和播放状态。",
                     )
                 "ping" -> JSONObject()
                 "tools/list" -> JSONObject().put("tools", tools())
@@ -97,6 +97,7 @@ internal class MusicMcpServer(private val app: MyMusicApp) : NanoHTTPD("127.0.0.
                 limit = integer(args, "limit", 30),
                 shuffle = boolean(args, "shuffle"),
             )
+            "favorite_song" -> PlaybackControlRequest(command = "favorite")
             "get_playback_state" -> PlaybackControlRequest(command = "query_mode")
             else -> throw IllegalArgumentException("未知工具：${params.optString("name")}")
         }
@@ -178,6 +179,12 @@ internal class MusicMcpServer(private val app: MyMusicApp) : NanoHTTPD("127.0.0.
                     .put("type", "object")
                     .put("properties", queueProperties)
                     .put("required", JSONArray().put("keyword").put("kind"))))
+            .put(JSONObject()
+                .put("name", "favorite_song")
+                .put("description", "收藏当前正在播放的歌曲。适用于“我喜欢这首歌”“我要收藏这首歌”“把这首歌加入收藏”等表达。没有正在播放的歌曲时会返回错误。")
+                .put("inputSchema", JSONObject()
+                    .put("type", "object")
+                    .put("properties", JSONObject())))
             .put(JSONObject()
                 .put("name", "get_playback_state")
                 .put("description", "查询吒友爱听当前歌曲、队列歌曲数、是否正在播放、收藏状态和循环模式。")

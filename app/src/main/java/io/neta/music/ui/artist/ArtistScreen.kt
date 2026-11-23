@@ -194,10 +194,11 @@ internal fun ArtistScreen(
         )
     }
     val playingKey = state.current?.key
+    val startingKey = state.starting?.song?.key
     if (LocalAppWindow.current.twoPane) {
-        TwoPaneArtist(artist, tab, { tab = it }, tint, ops, actions, playingKey, onMore, onBack)
+        TwoPaneArtist(artist, tab, { tab = it }, tint, ops, actions, playingKey, startingKey, onMore, onBack)
     } else {
-        PhoneArtist(artist, tab, { tab = it }, tint, ops, actions, playingKey, onMore, onBack)
+        PhoneArtist(artist, tab, { tab = it }, tint, ops, actions, playingKey, startingKey, onMore, onBack)
     }
     target?.let {
         SongActionsSheet(
@@ -223,6 +224,7 @@ private fun PhoneArtist(
     ops: ArtistOps,
     actions: MusicActions,
     playingKey: String?,
+    startingKey: String?,
     onMore: (Song) -> Unit,
     onBack: () -> Unit,
 ) {
@@ -305,7 +307,7 @@ private fun PhoneArtist(
                                 .padding(horizontal = gutter, vertical = 8.dp),
                         )
                     }
-                    artistTabContent(artist, tab, ops, actions, playingKey, songKeys, onMore, columns, gutter)
+                    artistTabContent(artist, tab, ops, actions, playingKey, startingKey, songKeys, onMore, columns, gutter)
                 }
             }
         }
@@ -400,6 +402,7 @@ private fun TwoPaneArtist(
     ops: ArtistOps,
     actions: MusicActions,
     playingKey: String?,
+    startingKey: String?,
     onMore: (Song) -> Unit,
     onBack: () -> Unit,
 ) {
@@ -506,7 +509,7 @@ private fun TwoPaneArtist(
                             Modifier.fillMaxSize(),
                             contentPadding = PaddingValues(bottom = overlay + 48.dp),
                         ) {
-                            artistTabContent(artist, tab, ops, actions, playingKey, songKeys, onMore, columns, 0.dp)
+                            artistTabContent(artist, tab, ops, actions, playingKey, startingKey, songKeys, onMore, columns, 0.dp)
                         }
                     }
                 }
@@ -641,6 +644,7 @@ private fun LazyListScope.artistTabContent(
     ops: ArtistOps,
     actions: MusicActions,
     playingKey: String?,
+    startingKey: String?,
     songKeys: List<String>,
     onMore: (Song) -> Unit,
     columns: Int,
@@ -666,7 +670,7 @@ private fun LazyListScope.artistTabContent(
         return
     }
     when (tab) {
-        ArtistTab.Songs -> artistSongs(artist, ops, actions, playingKey, songKeys, onMore, horizontal)
+        ArtistTab.Songs -> artistSongs(artist, ops, actions, playingKey, startingKey, songKeys, onMore, horizontal)
         ArtistTab.Albums -> artistAlbums(artist, ops, columns, horizontal)
         ArtistTab.About -> artistAbout(artist, horizontal)
     }
@@ -677,6 +681,7 @@ private fun LazyListScope.artistSongs(
     ops: ArtistOps,
     actions: MusicActions,
     playingKey: String?,
+    startingKey: String?,
     songKeys: List<String>,
     onMore: (Song) -> Unit,
     horizontal: Dp,
@@ -716,6 +721,7 @@ private fun LazyListScope.artistSongs(
                     .padding(bottom = if (index < songs.lastIndex) SegmentGap else 0.dp),
                 rank = index + 1,
                 playing = playingKey == song.key,
+                starting = startingKey == song.key,
                 trailing = formatDuration(song.duration).takeIf { it.isNotBlank() }?.let { time ->
                     {
                         Text(

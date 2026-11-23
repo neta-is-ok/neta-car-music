@@ -61,6 +61,8 @@ import io.neta.music.ui.MusicUiState
 import io.neta.music.ui.openLabel
 import io.neta.music.ui.components.PlayButtonSize
 import io.neta.music.ui.components.PlayPauseButton
+import io.neta.music.ui.components.LoadingText
+import io.neta.music.ui.components.rememberLoadingShown
 import io.neta.music.ui.components.rememberSettlingOffsetState
 import io.neta.music.ui.components.sharedNowPlayingCover
 import kotlin.math.abs
@@ -100,6 +102,9 @@ fun PhoneMiniPlayerBar(
 @Composable
 fun MiniPlayer(state: MusicUiState, position: State<Long>, actions: MusicActions, onOpenQueue: () -> Unit, modifier: Modifier = Modifier) {
     val song = state.current ?: return
+    val starting = state.starting
+    // 起播中只换副标题，等加载持续一小会儿再换，地址有缓存时不闪
+    val loading = rememberLoadingShown(starting != null)
     val drag = rememberSettlingOffsetState()
     val threshold = with(LocalDensity.current) { 72.dp.toPx() }
     // 手势协程不随重组重启，阈值和回调都从最新状态读取
@@ -176,13 +181,21 @@ fun MiniPlayer(state: MusicUiState, position: State<Long>, actions: MusicActions
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            Text(
-                "${song.artist} · $source",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.75f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            if (loading) {
+                // 起播中：副标题换成进度（正在获取播放地址、正在到别的平台查找）
+                LoadingText(
+                    starting?.step.orEmpty(),
+                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.75f),
+                )
+            } else {
+                Text(
+                    "${song.artist} · $source",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.75f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
         PlayPauseButton(state.playing, { actions.transport("play") }, size = PlayButtonSize.Mini)
         IconButton(onClick = { actions.transport("next") }, modifier = Modifier.size(48.dp)) {

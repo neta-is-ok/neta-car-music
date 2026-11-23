@@ -45,9 +45,12 @@ import io.neta.music.ui.MusicActions
 import io.neta.music.ui.MusicUiState
 import io.neta.music.ui.openLabel
 import io.neta.music.ui.components.LocalAppWindow
+import io.neta.music.ui.components.LoadingMark
+import io.neta.music.ui.components.LoadingText
 import io.neta.music.ui.components.PlayButtonSize
 import io.neta.music.ui.components.PlayPauseButton
 import io.neta.music.ui.components.WavySeekBar
+import io.neta.music.ui.components.rememberLoadingShown
 
 /** 底部播放条高度（不含系统导航栏），Snackbar 要让开这么多。 */
 val BottomPlayerBarHeight = 88.dp
@@ -77,7 +80,13 @@ fun BottomPlayerBar(
         )
         return
     }
-    val song = state.current ?: return
+    val starting = state.starting
+    // 还没有正在放的歌时，点中的这首先顶上：播放条立刻出现
+    val song = state.current ?: starting?.song ?: return
+    // 起播期间上一首 / 下一首动的是旧队列，没有歌在播时先不响应
+    val fresh = state.current == null && starting != null
+    // 旧歌还在响时只换副标题，等加载持续一小会儿再换，地址有缓存时不闪
+    val loading = rememberLoadingShown(starting != null)
     val container = MaterialTheme.colorScheme.surfaceContainer
     // 播放条横跨内容区，折痕按它自己的位置测量（扣掉左右留白后）
     val anchor = rememberFoldAnchor()
@@ -110,13 +119,18 @@ fun BottomPlayerBar(
                 Cover(song.cover, song.title, if (compact) 48.dp else 56.dp, corner = if (compact) 12.dp else 14.dp)
                 Column(Modifier.weight(1f)) {
                     Text(song.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(
-                        "${song.artist} · ${state.currentSource?.providerName ?: song.source}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    if (starting != null && (fresh || loading)) {
+                        // 起播中：副标题换成进度（正在获取播放地址、正在到别的平台查找）
+                        LoadingText(starting.step)
+                    } else {
+                        Text(
+                            "${song.artist} · ${state.currentSource?.providerName ?: song.source}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                 }
             }
         }
@@ -125,9 +139,17 @@ fun BottomPlayerBar(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(if (compact) 0.dp else BottomPlayerBarGap),
             ) {
-                IconButton(onClick = { actions.transport("previous") }) { Icon(Icons.Filled.SkipPrevious, "上一首") }
-                PlayPauseButton(state.playing, { actions.transport("play") }, size = if (compact) PlayButtonSize.Small else PlayButtonSize.Medium)
-                IconButton(onClick = { actions.transport("next") }) { Icon(Icons.Filled.SkipNext, "下一首") }
+                IconButton(onClick = { actions.transport("previous") }, enabled = !fresh) { Icon(Icons.Filled.SkipPrevious, "上一首") }
+                val playSize = if (compact) PlayButtonSize.Small else PlayButtonSize.Medium
+                if (fresh) {
+                    // 播放键的位置先放转圈，地址出来后换回播放键
+                    Box(Modifier.size(playSize.touchTarget), contentAlignment = Alignment.Center) {
+                        LoadingMark(Modifier.size(playSize.icon))
+                    }
+                } else {
+                    PlayPauseButton(state.playing, { actions.transport("play") }, size = playSize)
+                }
+                IconButton(onClick = { actions.transport("next") }, enabled = !fresh) { Icon(Icons.Filled.SkipNext, "下一首") }
             }
         }
         val seek: @Composable (Modifier) -> Unit = { modifier ->

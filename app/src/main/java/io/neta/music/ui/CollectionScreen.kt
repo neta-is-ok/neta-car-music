@@ -216,6 +216,7 @@ fun CollectionScreen(
         onExit = { selection.exit() },
     )
     val playingKey = state.current?.key
+    val startingKey = state.starting?.song?.key
     // 专辑页的黑胶：正在放这张专辑里的歌时慢慢转
     val albumSpinning = collection.kind == CollectionKind.Album && state.playing &&
         playingKey != null && songs.any { it.key == playingKey }
@@ -242,9 +243,9 @@ fun CollectionScreen(
                 onSettingsOpenChange = { posterSettingsOpen = it },
             )
         LocalAppWindow.current.twoPane ->
-            TwoPaneCollection(collection, tint, ops, saved, actions, playingKey, onBack, onMore, selection, selectionOps, showPoster, albumSpinning)
+            TwoPaneCollection(collection, tint, ops, saved, actions, playingKey, startingKey, onBack, onMore, selection, selectionOps, showPoster, albumSpinning)
         else ->
-            PhoneCollection(collection, tint, ops, saved, actions, playingKey, onBack, onMore, selection, selectionOps, showPoster, albumSpinning)
+            PhoneCollection(collection, tint, ops, saved, actions, playingKey, startingKey, onBack, onMore, selection, selectionOps, showPoster, albumSpinning)
     }
     target?.let {
         SongActionsSheet(
@@ -395,6 +396,7 @@ private fun PhoneCollection(
     saved: Boolean,
     actions: MusicActions,
     playingKey: String?,
+    startingKey: String?,
     onBack: () -> Unit,
     onMore: (Song) -> Unit,
     selection: SelectionState,
@@ -502,7 +504,7 @@ private fun PhoneCollection(
                     }
                 }
                 albumIntro(collection, horizontal = gutter)
-                collectionSongs(collection, actions, playingKey, songKeys, onMore, horizontal = gutter, selection = selection)
+                collectionSongs(collection, actions, playingKey, startingKey, songKeys, onMore, horizontal = gutter, selection = selection)
                 albumFooter(collection, actions, horizontal = gutter)
             }
         }
@@ -518,6 +520,7 @@ private fun TwoPaneCollection(
     saved: Boolean,
     actions: MusicActions,
     playingKey: String?,
+    startingKey: String?,
     onBack: () -> Unit,
     onMore: (Song) -> Unit,
     selection: SelectionState,
@@ -648,7 +651,7 @@ private fun TwoPaneCollection(
                     Modifier.fillMaxHeight(),
                     contentPadding = PaddingValues(top = LocalFoldPane.current.top(if (tv) 0.dp else 56.dp), bottom = overlay + 48.dp),
                 ) {
-                    collectionSongs(collection, actions, playingKey, songKeys, onMore, horizontal = 0.dp, selection = selection)
+                    collectionSongs(collection, actions, playingKey, startingKey, songKeys, onMore, horizontal = 0.dp, selection = selection)
                     albumFooter(collection, actions, horizontal = 0.dp)
                 }
             },
@@ -769,6 +772,7 @@ private fun LazyListScope.collectionSongs(
     collection: CollectionUiState,
     actions: MusicActions,
     playingKey: String?,
+    startingKey: String?,
     songKeys: List<String>,
     onMore: (Song) -> Unit,
     horizontal: androidx.compose.ui.unit.Dp,
@@ -840,6 +844,7 @@ private fun LazyListScope.collectionSongs(
                     rankEmphasis = !album,
                     rankLabel = if (album) ({ "第 $it 首" }) else ({ "第 $it 名" }),
                     playing = playingKey == song.key,
+                    starting = startingKey == song.key,
                     badges = songBadge(song, collection.sourceName),
                     trailing = when {
                         picking -> ({

@@ -43,6 +43,7 @@ fun NavGraphBuilder.localMusicRoutes(app: AppNav) {
             providerId = entry.arguments?.getString("provider").orEmpty(),
             actions = app.actions,
             playingKey = state.current?.key,
+            startingKey = state.starting?.song?.key,
             onBack = app::back,
             onOpenAccounts = { app.openSettings("settings/accounts") },
             onConnectWebDav = { app.nav.navigate(localWebDavRoute(app)) { launchSingleTop = true } },

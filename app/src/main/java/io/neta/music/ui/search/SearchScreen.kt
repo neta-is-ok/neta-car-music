@@ -236,6 +236,8 @@ private class SearchCtx(
     val cookies: State<Map<String, String>>,
     val playing: State<Boolean>,
     val currentTrackId: State<String?>,
+    /** 正在起播的聚合曲目 id；点下去到地址解析出来之间这一行显示加载中。 */
+    val startingTrackId: State<String?>,
     val favoriteKeys: State<Set<String>>,
     val playlists: State<List<LocalPlaylistSummary>>,
     val actions: MusicActions,
@@ -254,6 +256,7 @@ private class SearchCtx(
 
     fun play(track: CanonicalTrack) = actions.playTrack(track, groups.value)
     fun isCurrent(track: CanonicalTrack) = currentTrackId.value == track.id
+    fun isStarting(track: CanonicalTrack) = startingTrackId.value == track.id
     fun openSource(track: CanonicalTrack) = actions.openSource(track, groups.value)
 }
 
@@ -289,6 +292,7 @@ private fun buildSearchCtx(
     cookies = derivedStateOf { appState.value.cookies },
     playing = derivedStateOf { appState.value.playing },
     currentTrackId = derivedStateOf { appState.value.currentTrack?.id },
+    startingTrackId = derivedStateOf { appState.value.starting?.trackId?.takeIf { it.isNotEmpty() } },
     favoriteKeys = derivedStateOf { favoritesState.value.mapTo(HashSet()) { it.key } },
     playlists = derivedStateOf { playlistsState.value },
     actions = actions,
@@ -1276,6 +1280,7 @@ private fun SearchSongRow(
             if (ctx.selection.active) ctx.selection.toggle(track.id) else ctx.openActions(track)
         },
         playing = ctx.isCurrent(track),
+        starting = ctx.isStarting(track),
         badges = badges,
         trailing = trailing,
         onMore = rowMore,

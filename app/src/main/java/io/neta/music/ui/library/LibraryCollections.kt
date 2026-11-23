@@ -96,6 +96,7 @@ import io.neta.music.ui.local.rememberLocalDisplay
 import io.neta.music.ui.local.rememberLocalUnplayableHost
 import io.neta.music.ui.components.tvFocusRing
 import io.neta.music.ui.formatBytes
+import io.neta.music.ui.isStarting
 import io.neta.music.ui.relativeTime
 import io.neta.music.ui.song
 import kotlinx.coroutines.Dispatchers
@@ -201,6 +202,7 @@ fun FavoritesScreen(
                 count = shown.size,
                 onClick = { if (!unplayable.intercept(song, local)) actions.play(song, songs) },
                 playing = state.current?.key == song.key,
+                starting = state.isStarting(song),
                 dimmed = local?.gone == true,
                 badges = local?.let { copy -> { LocalSongBadge(copy) } },
                 trailing = {
@@ -339,6 +341,7 @@ fun HistoryScreen(
                 onClick = { if (!unplayable.intercept(song, local)) actions.play(song, queue) },
                 modifier = if (focusFirst && index == 0) Modifier.focusRequester(firstRow) else Modifier,
                 playing = state.current?.key == song.key,
+                starting = state.isStarting(song),
                 dimmed = local?.gone == true,
                 badges = local?.let { copy -> { LocalSongBadge(copy) } },
                 trailing = {
@@ -576,6 +579,7 @@ fun DownloadsScreen(
                         }
                     },
                 playing = state.current?.key == item.song.key,
+                starting = state.isStarting(item.song),
                 trailing = {
                     IconButton(onClick = { deleting = item.record }, modifier = Modifier.tvFocusRing(CircleShape)) {
                         Icon(Icons.Outlined.Delete, "删除“${item.song.title}”的下载文件", tint = MaterialTheme.colorScheme.onSurfaceVariant)

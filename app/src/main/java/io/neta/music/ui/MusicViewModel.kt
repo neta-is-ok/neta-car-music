@@ -217,6 +217,19 @@ data class SodaWelfareUi(
     val error: String = "",
 )
 
+/**
+ * 正在起播的那首（见 [MusicUiState.starting]）：地址还没解析出来。
+ * [trackId] 是聚合搜索结果那一行的规范 id，从搜索结果点歌时才有；其它列表按 [song] 的 key 认。[step] 是现在进行到哪一步。
+ */
+data class StartingSong(
+    val song: Song,
+    val trackId: String = "",
+    val step: String = "",
+)
+
+/** 列表里这首歌是不是正在起播。 */
+fun MusicUiState.isStarting(song: Song): Boolean = starting?.song?.key == song.key
+
 data class MusicUiState(
     val providers: List<ProviderInfo> = emptyList(),
     val providerId: String = "netease",
@@ -325,6 +338,10 @@ data class MusicUiState(
     val mergeTrack: CanonicalTrack? = null,
     val playbackNotice: String = "",
     val deepLink: String = "",
+    /** 正在起播、地址还没解析出来的那首；点下去当帧就有，列表行和播放条据此显示加载中。装进播放器或失败后清空。 */
+    val starting: StartingSong? = null,
+    /** 点了播放但还在缓冲、没出声：播放键转圈，别看着像暂停了。 */
+    val buffering: Boolean = false,
 ) {
     /**
      * 来源胶囊用的平台：先按 [filter] 筛能力，再按设置里的音乐源顺序排（见 [AggregationSettings.priorityFor]）。
@@ -1039,6 +1056,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         // 会取消掉正在跑的「随便听听」，把它的转圈一起收掉
         _playlists.update { it.copy(listenStarting = mode.id, quickListenStarting = false) }
         directPlayJob?.cancel()
+        startJob?.cancel()
         directPlayJob = viewModelScope.launch {
             val cookie = cookieFor(providerId)
             val error = startListeningFeed(providerId, mode, cookie)
@@ -1055,6 +1073,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         val providerId = current.providerId.ifBlank { settingsState.value.provider }
         _playlists.update { it.copy(quickListenStarting = true) }
         directPlayJob?.cancel()
+        startJob?.cancel()
         directPlayJob = viewModelScope.launch {
             val cookie = cookieFor(providerId)
             val modes = current.listenModes.ifEmpty {
@@ -1807,6 +1826,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         app.carMedia?.cancelResume()
         val source = chart.source.ifBlank { _charts.value.providerId.ifBlank { settingsState.value.provider } }
         directPlayJob?.cancel()
+        startJob?.cancel()
         directPlayJob = viewModelScope.launch {
             val songs = runCatching { app.repository.topListSongs(source, cookieFor(source), chart.id) }
                 .getOrElse {
@@ -1823,6 +1843,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         app.carMedia?.cancelResume()
         val source = playlist.source.ifBlank { settingsState.value.provider }
         directPlayJob?.cancel()
+        startJob?.cancel()
         directPlayJob = viewModelScope.launch {
             val songs = runCatching {
                 if (album) app.repository.albumSongs(source, cookieFor(source), playlist.id)
@@ -3555,8 +3576,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     /** [openPlayer] 为 false 时只换队列开播，不弹出播放页（详情页海报视图）。 */
     fun play(song: Song, queue: List<Song> = listOf(song), openPlayer: Boolean = true) {
+        // 点击当帧先给加载反馈，再算队列
+        val request = beginStart(song, trackId = "")
         val (selected, ordered) = newQueue(song, queue)
-        playTrack(selected, ordered, openPlayer = openPlayer)
+        launchStart(selected, ordered, null, openPlayer, request)
     }
 
     /** 和 [play] 一样，但等到装进播放器（或失败）才返回；组件后台起播用。[feed] 是这份队列所属的听歌模式。 */
@@ -3590,7 +3613,44 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         pinnedProvider: String? = null,
         openPlayer: Boolean = true,
     ) {
-        viewModelScope.launch { startTrack(track, queue, pinnedProvider, openPlayer) }
+        val request = beginStart(preferredSong(track), track.id)
+        launchStart(track, queue, pinnedProvider, openPlayer, request)
+    }
+
+    /** 界面发起的起播：连点时只保留最后一次（同 [directPlayJob]），先点的晚解析完也不能把后点的顶掉。 */
+    private var startJob: Job? = null
+
+    /** 当前这次界面起播的编号；加载态只属于它，被新点击顶掉的旧任务不再动界面。 */
+    private var startRequest = 0
+
+    /** 每次起播（界面、组件、远控都算）加一；解析完发现变了，说明期间又点了别的歌，这次作废。 */
+    private var startSerial = 0
+
+    /** 点下去当帧就写加载态，返回这次起播的编号；[launchStart] 结束时按它决定要不要清。 */
+    private fun beginStart(song: Song, trackId: String): Int {
+        startJob?.cancel()
+        val request = ++startRequest
+        base.update { it.copy(starting = StartingSong(song, trackId)) }
+        return request
+    }
+
+    private fun launchStart(
+        track: CanonicalTrack,
+        queue: List<CanonicalTrack>,
+        pinnedProvider: String?,
+        openPlayer: Boolean,
+        request: Int,
+    ) {
+        startJob = viewModelScope.launch {
+            try {
+                startTrack(track, queue, pinnedProvider, openPlayer) { step ->
+                    if (request == startRequest) base.update { it.copy(starting = it.starting?.copy(step = step)) }
+                }
+            } finally {
+                // 被新的一次点击顶掉时不清：加载态已经是那一首的了
+                if (request == startRequest) base.update { it.copy(starting = null) }
+            }
+        }
     }
 
     /** [resolveForStart] 的结果：解析后的曲目、选中的源，以及带好地址、能直接装进播放器的歌。 */
@@ -3615,12 +3675,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
      * 把点中的这首解析到能直接起播：本机文件直接用文件地址，在线歌走取流与自动匹配换源。
      * 放不了时不写状态，失败原因放在返回的 [StartOutcome] 里由调用方处置（可能还要接着试下一首）。
      */
-    private suspend fun resolveForStart(track: CanonicalTrack, pinnedProvider: String?): StartOutcome {
+    private suspend fun resolveForStart(track: CanonicalTrack, pinnedProvider: String?, onProgress: ((String) -> Unit)? = null): StartOutcome {
         val local = localFileFor(track)
         if (local != null) {
             return StartOutcome(StartResolution(track, local.first, local.first.song.copy(url = local.second), fromLocal = true))
         }
-        val result = resolvePlayable(track, pinnedProvider)
+        val result = resolvePlayable(track, pinnedProvider, onProgress = onProgress)
         val ready = result.resolution as? Resolution.Ready
         if (ready == null) {
             return StartOutcome(
@@ -3651,7 +3711,16 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         pinnedProvider: String?,
         openPlayer: Boolean,
         playRequestId: String = "",
+        /** 现在解析到哪一步；界面点歌时传进来更新播放条上的文字，组件、远控、MCP 这些后台入口不传。 */
+        onProgress: ((String) -> Unit)? = null,
     ): Boolean {
+        // 解析期间又发起了别的起播（列表连点、组件、远控）：这一次作废，别把后来的顶掉
+        val serial = ++startSerial
+        val began = SystemClock.elapsedRealtime()
+        fun progress(step: String) {
+            AppLog.d("Player", "起播进度 ${SystemClock.elapsedRealtime() - began}ms：$step")
+            onProgress?.invoke(step)
+        }
         // 先取消旧的静音恢复，再异步解析新歌曲；解除静音不能在解析期间恢复旧内容。
         app.carMedia?.cancelResume()
         val player = awaitController()
@@ -3666,7 +3735,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         // 照队列顺序往后找第一首能放的从它起播，提示跳过了哪些，和切歌途中 skipUnplayable 的做法一致。
         // 换源（pinnedProvider 非空）点定的就是这一首，失败只提示原因，不悄悄改放别的歌。
         var startAt = startIndex.coerceAtLeast(0)
-        var outcome = resolveForStart(ordered[startAt], pinnedProvider)
+        progress("正在获取播放地址…")
+        var outcome = resolveForStart(ordered[startAt], pinnedProvider, ::progress)
         val clickedOutcome = outcome
         val skippedTitles = mutableListOf<String>()
         while (outcome.resolution == null && pinnedProvider == null &&
@@ -3674,11 +3744,19 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         ) {
             skippedTitles += ordered[startAt].title
             startAt++
+            progress("《${ordered[startAt - 1].title}》暂时放不了，正在试下一首…")
             currentCoroutineContext().ensureActive()
-            outcome = resolveForStart(ordered[startAt], pinnedProvider)
+            outcome = resolveForStart(ordered[startAt], pinnedProvider, ::progress)
         }
+        // 被新的点击取消的这一趟不再报失败：用户已经在等另一首了
+        currentCoroutineContext().ensureActive()
         val resolved = outcome.resolution ?: run {
+            AppLog.w("Player", "起播失败《${track.title}》，解析 ${SystemClock.elapsedRealtime() - began}ms：${clickedOutcome.failNotice}")
             base.value = base.value.copy(playbackNotice = clickedOutcome.failNotice, deepLink = clickedOutcome.deepLink)
+            return false
+        }
+        if (serial != startSerial) {
+            AppLog.d("Player", "起播《${resolved.song.title}》作废：解析期间点了别的歌")
             return false
         }
         val playableTrack = resolved.track
@@ -3709,7 +3787,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         AppLog.d(
             "Player",
             "起播《${resolvedSong.title}》${source.providerName}${if (resolved.fromLocal) "（本机文件）" else ""}" +
-                "，队列 ${queueSongs.size} 首，从第 ${startAt + 1} 首" +
+                "，队列 ${queueSongs.size} 首，从第 ${startAt + 1} 首，解析 ${SystemClock.elapsedRealtime() - began}ms" +
                 if (skippedTitles.isEmpty()) "" else "（跳过 ${skippedTitles.joinToString("、") { "《$it》" }}）",
         )
         player.setMediaItems(queueSongs.mapIndexed { index, song ->
@@ -3729,10 +3807,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             playbackNotice = fallbackNotice,
             error = "",
             deepLink = "",
+            // 地址到手，加载态收掉
+            starting = null,
         )
         verifyQueueApplied(player, requestId, playRequestId = playRequestId, playTrackId = playableTrack.id)
         rememberCanonical(playableTrack)
-        remember("history", historySong(resolvedSong))
+        // 队列已经装上了：记“最近播放”这步落库不能被新的点击取消在半路，否则后面的歌词不会加载
+        withContext(NonCancellable) { remember("history", historySong(resolvedSong)) }
         loadLyrics(resolvedSong)
         return true
     }
@@ -4493,6 +4574,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         pinnedProvider: String? = null,
         excludeProviders: Set<String> = emptySet(),
         forDownload: Boolean = false,
+        onProgress: ((String) -> Unit)? = null,
     ): AutoResolution {
         if (track.sources.any { it.providerId == LOCAL_SOURCE }) return resolveLocal(track, excludeProviders)
         // 下载只要整曲：试听片段和无损档位一样会被平台降级，回退时也优先能下整曲的源
@@ -4513,6 +4595,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         var current = track
         var last = initial
         for (providerId in autoMatchProviders(attempted)) {
+            // 这一段每个平台最长要等 AUTO_MATCH_TIMEOUT_MS，换平台时说一声，用户知道还在动
+            onProgress?.invoke("原音源不可用，正在到${providerName(providerId)}查找…")
             val result = withTimeoutOrNull(AUTO_MATCH_TIMEOUT_MS) {
                 runCatching { matchJob.matchOne(original, providerId) }.getOrNull()
             } ?: continue
@@ -4787,6 +4871,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
          * 用户按的暂停（界面、通知栏、遥控器、组件）、睡眠定时、队列播完都不接。
          */
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            syncBuffering()
             if (playWhenReady) {
                 interruptedBySystem = false
                 // 用户自己按的播放：断流重连的次数重新算
@@ -4993,6 +5078,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             if (playbackState == Player.STATE_READY) {
                 base.value.currentTrack?.id?.let(failoverExcluded::remove)
             }
+            syncBuffering(playbackState)
+        }
+
+        /** 点了播放但还没出声（缓冲中）：记到界面上，播放键转圈。暂停着的缓冲不算。 */
+        private fun syncBuffering(playbackState: Int = controller?.playbackState ?: Player.STATE_IDLE) {
+            val buffering = playbackState == Player.STATE_BUFFERING && controller?.playWhenReady == true
+            if (base.value.buffering != buffering) base.update { it.copy(buffering = buffering) }
         }
 
         override fun onPlayerError(error: PlaybackException) {
@@ -5199,6 +5291,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     if (duration != C.TIME_UNSET && base.value.duration != duration.coerceAtLeast(0)) {
                         base.value = base.value.copy(duration = duration.coerceAtLeast(0))
                     }
+                    // 缓冲状态也在这里对一遍：换了队列后播放器从头到尾就绪时，会话不推状态变化，监听里等不到事件
+                    val buffering = it.playbackState == Player.STATE_BUFFERING && it.playWhenReady
+                    if (buffering != base.value.buffering) base.value = base.value.copy(buffering = buffering)
                     // 播放中每 10 秒存一次位置：进程被杀后组件和继续播放从这里接上
                     if (it.isPlaying && ++ticks % CURSOR_SAVE_TICKS == 0) persistCursor()
                     // 播放上报喂一帧：平台据此判断该发什么（见 PlayReportHub）
@@ -5479,7 +5574,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             songs = state.queue,
             cursor = SavedCursor(current.key, at.coerceAtLeast(0), positionMs.coerceAtLeast(0), state.duration, shape),
         )
-        base.update { it.copy(playing = false) }
+        base.update { it.copy(playing = false, buffering = false) }
         anchor.value = PositionAnchor(current.key, positionMs.coerceAtLeast(0), SystemClock.elapsedRealtime())
     }
 

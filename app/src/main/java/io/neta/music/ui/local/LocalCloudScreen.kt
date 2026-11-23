@@ -271,6 +271,7 @@ internal fun LazyListScope.localCloudNeteaseList(
     onPlay: (CloudEntry, String?) -> Unit,
     onDelete: (CloudEntry, String?) -> Unit,
     onLoadMore: () -> Unit,
+    starting: String? = null,
 ) {
     if (CloudProvider.NeteaseCloud !in index.clouds) return
     val absent = netease.entries.filter { entry -> links.localId(entry)?.let { index.byId[it]?.onDevice } != true }
@@ -290,7 +291,7 @@ internal fun LazyListScope.localCloudNeteaseList(
     item(key = "cloud:absentHead", contentType = "header") { DayLabel("网易云盘里，本机没有的") }
     itemsIndexed(absent, key = { _, entry -> "cloud:n:${entry.id}" }, contentType = { _, _ -> "song" }) { position, entry ->
         val localId = links.localId(entry)
-        CloudEntryRow(entry, localId, index, position, absent.size + if (netease.hasMore) 1 else 0, playing, onPlay, onDelete)
+        CloudEntryRow(entry, localId, index, position, absent.size + if (netease.hasMore) 1 else 0, playing, onPlay, onDelete, starting)
     }
     if (netease.hasMore) {
         item(key = "cloud:more", contentType = "more") {
@@ -380,6 +381,7 @@ private fun CloudEntryRow(
     playing: String?,
     onPlay: (CloudEntry, String?) -> Unit,
     onDelete: (CloudEntry, String?) -> Unit,
+    starting: String? = null,
 ) {
     val provider = CloudProvider.of(entry.provider) ?: CloudProvider.NeteaseCloud
     val song = cloudEntrySong(entry, localId, index)
@@ -410,6 +412,7 @@ private fun CloudEntryRow(
             count = count,
             onClick = { if (playable) onPlay(entry, localId) },
             playing = song != null && playing == song.key,
+            starting = song != null && starting == song.key,
             dimmed = !playable,
             badges = {
                 PlatformBadge(
@@ -532,6 +535,7 @@ fun LocalCloudListScreen(
     onBack: () -> Unit,
     onOpenAccounts: () -> Unit,
     onConnectWebDav: () -> Unit,
+    startingKey: String? = null,
 ) {
     val provider = CloudProvider.of(providerId) ?: return
     val library = rememberLocalLibrary() ?: return
@@ -604,6 +608,7 @@ fun LocalCloudListScreen(
                         position = position,
                         count = list.entries.size,
                         playing = playingKey,
+                        starting = startingKey,
                         onPlay = { e, id -> entryActions.play(e, id, index) },
                         onDelete = { e, id -> entryActions.confirm = Triple(e, id, list) },
                     )

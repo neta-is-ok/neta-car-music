@@ -113,6 +113,8 @@ fun SongRow(
     modifier: Modifier = Modifier,
     rank: Int? = null,
     playing: Boolean = false,
+    /** 点下去正在起播、地址还没出来：底色和字重同正在播放，封面上转圈；起播后接着就是正在播放的样子。 */
+    starting: Boolean = false,
     badges: @Composable (RowScope.() -> Unit)? = null,
     trailing: @Composable (RowScope.() -> Unit)? = null,
     onMore: (() -> Unit)? = null,
@@ -131,7 +133,7 @@ fun SongRow(
     hoverReplacesTrailing: Boolean = true,
 ) {
     val shape = segmentShape(index, count)
-    val background = if (playing) MaterialTheme.colorScheme.secondaryContainer else container
+    val background = if (playing || starting) MaterialTheme.colorScheme.secondaryContainer else container
     val padding = PaddingValues(start = if (rank != null) 8.dp else 12.dp, end = if (onMore != null) 0.dp else 16.dp, top = 8.dp, bottom = 8.dp)
     if (swipe == null) {
         Row(
@@ -142,12 +144,12 @@ fun SongRow(
                 .clip(shape)
                 .background(background)
                 .combinedClickable(onClick = onClick, onLongClick = onLongClick, onLongClickLabel = onLongClick?.let { "更多操作" })
-                // 正在播放只靠底色和字重区分，读屏要单独说出来
-                .semantics { if (playing) stateDescription = "正在播放" }
+                // 正在起播、正在播放只靠底色和字重区分，读屏要单独说出来
+                .semantics { if (starting) stateDescription = "正在加载" else if (playing) stateDescription = "正在播放" }
                 .padding(padding),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            SongRowBody(title, subtitle, cover, rank, playing, badges, trailing, onMore, dimmed, showCover, rankEmphasis, rankLabel)
+            SongRowBody(title, subtitle, cover, rank, playing, starting, badges, trailing, onMore, dimmed, showCover, rankEmphasis, rankLabel)
         }
         return
     }
@@ -159,6 +161,7 @@ fun SongRow(
         onClick = onClick,
         onLongClick = onLongClick,
         playing = playing,
+        starting = starting,
         padding = padding,
     ) { hovered ->
         // 鼠标悬停：行尾换成滑动的那几个按钮（稿子里时长藏起来、按钮出来）
@@ -170,7 +173,7 @@ fun SongRow(
         } else {
             trailing
         }
-        SongRowBody(title, subtitle, cover, rank, playing, badges, shownTrailing, onMore, dimmed, showCover, rankEmphasis, rankLabel)
+        SongRowBody(title, subtitle, cover, rank, playing, starting, badges, shownTrailing, onMore, dimmed, showCover, rankEmphasis, rankLabel)
     }
 }
 
@@ -181,6 +184,7 @@ private fun RowScope.SongRowBody(
     cover: String,
     rank: Int?,
     playing: Boolean,
+    starting: Boolean,
     badges: @Composable (RowScope.() -> Unit)?,
     trailing: @Composable (RowScope.() -> Unit)?,
     onMore: (() -> Unit)?,
@@ -190,25 +194,45 @@ private fun RowScope.SongRowBody(
     rankLabel: (Int) -> String,
 ) {
     val fade = if (dimmed) Modifier.alpha(0.5f) else Modifier
-    val content = if (playing) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurface
+    val active = playing || starting
+    val content = if (active) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurface
+    // 底色一点下去就变；转圈等加载持续一小会儿再出来，地址有缓存时不闪
+    val loading = rememberLoadingShown(starting)
     if (rank != null) {
         val emphasized = rankEmphasis && rank <= 3
-        Text(
-            rank.toString(),
-            Modifier.width(32.dp).semantics { contentDescription = rankLabel(rank) },
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = if (emphasized) FontWeight.Black else FontWeight.Medium,
-            color = if (emphasized) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
-        )
+        if (loading && !showCover) {
+            // 没有封面的行（专辑曲目）转圈替换序号；有封面的画在封面上
+            Box(Modifier.width(32.dp), contentAlignment = Alignment.Center) {
+                LoadingMark(Modifier.size(22.dp), content)
+            }
+        } else {
+            Text(
+                rank.toString(),
+                Modifier.width(32.dp).semantics { contentDescription = rankLabel(rank) },
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = if (emphasized) FontWeight.Black else FontWeight.Medium,
+                color = if (emphasized) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
+        }
     }
-    if (showCover) Box(fade) { Cover(cover, title, 48.dp, corner = 12.dp) }
+    if (showCover) Box(fade, contentAlignment = Alignment.Center) {
+        Cover(cover, title, 48.dp, corner = 12.dp)
+        if (loading) {
+            Box(
+                Modifier.size(48.dp).clip(RoundedCornerShape(12.dp)).background(Color.Black.copy(alpha = 0.4f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                LoadingMark(Modifier.size(22.dp), Color.White)
+            }
+        }
+    }
     Column(Modifier.weight(1f).padding(start = if (showCover) 14.dp else 6.dp, end = 8.dp)) {
         Text(
             title,
             modifier = fade,
             style = MaterialTheme.typography.bodyLarge,
-            fontWeight = if (playing) FontWeight.Bold else FontWeight.Medium,
+            fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
             color = content,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -221,7 +245,7 @@ private fun RowScope.SongRowBody(
             Text(
                 subtitle,
                 style = MaterialTheme.typography.bodyMedium,
-                color = if (playing) content.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurfaceVariant,
+                color = if (active) content.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )

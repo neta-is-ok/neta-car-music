@@ -62,7 +62,10 @@ enum class PlayButtonSize(val diameter: Dp, val icon: Dp) {
     val touchTarget: Dp get() = maxOf(48.dp, diameter)
 }
 
-/** 播放 / 暂停只切换图标，轮廓始终为圆；按下时轻微缩放，不改变布局尺寸。 */
+/**
+ * 播放 / 暂停只切换图标，轮廓始终为圆；按下时轻微缩放，不改变布局尺寸。
+ * 缓冲中（点了播放还没出声，见 [LocalPlaybackBuffering]）图标位置换成转圈，点了照样暂停。
+ */
 @Composable
 fun PlayPauseButton(
     playing: Boolean,
@@ -74,6 +77,8 @@ fun PlayPauseButton(
 ) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
+    // 缓冲很快就过去时不闪一下转圈
+    val loadingShown = rememberLoadingShown(LocalPlaybackBuffering.current?.value == true)
     val scale by animateFloatAsState(
         if (pressed) 0.92f else 1f,
         MaterialTheme.motionScheme.fastSpatialSpec(),
@@ -87,7 +92,7 @@ fun PlayPauseButton(
             .semantics {
                 role = Role.Button
                 contentDescription = if (playing) "暂停" else "播放"
-                stateDescription = if (playing) "正在播放" else "已暂停"
+                stateDescription = if (loadingShown) "正在缓冲" else if (playing) "正在播放" else "已暂停"
             },
         shape = CircleShape,
         color = Color.Transparent,
@@ -107,12 +112,16 @@ fun PlayPauseButton(
                     .background(containerColor, CircleShape),
                 contentAlignment = Alignment.Center,
             ) {
-                Crossfade(playing, label = "playIcon") { isPlaying ->
-                    Icon(
-                        if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                        contentDescription = null,
-                        modifier = Modifier.size(size.icon),
-                    )
+                if (loadingShown) {
+                    LoadingMark(Modifier.size(size.icon), contentColor)
+                } else {
+                    Crossfade(playing, label = "playIcon") { isPlaying ->
+                        Icon(
+                            if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                            contentDescription = null,
+                            modifier = Modifier.size(size.icon),
+                        )
+                    }
                 }
             }
         }

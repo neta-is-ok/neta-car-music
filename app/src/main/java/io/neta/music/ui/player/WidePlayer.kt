@@ -94,7 +94,10 @@ import io.neta.music.ui.MusicActions
 import io.neta.music.ui.ParsedLyrics
 import io.neta.music.ui.adaptive.FoldSplit
 import io.neta.music.ui.components.LocalAppWindow
+import io.neta.music.ui.components.LocalPlaybackBuffering
+import io.neta.music.ui.components.LoadingMark
 import io.neta.music.ui.components.WavySeekBar
+import io.neta.music.ui.components.rememberLoadingShown
 import io.neta.music.ui.player.stage.LyricStage
 import io.neta.music.ui.player.stage.StageBinding
 import io.neta.music.ui.player.stage.StageInsets
@@ -450,6 +453,8 @@ private fun DockSkipButton(icon: ImageVector, description: String, onClick: () -
 private fun DockPlayButton(playing: Boolean, onClick: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
+    // 缓冲中（点了播放还没出声）图标换成转圈，状态由外壳提供（LocalPlaybackBuffering）
+    val loadingShown = rememberLoadingShown(LocalPlaybackBuffering.current?.value == true)
     val cookie = MaterialShapes.Cookie12Sided.toShape()
     val scale = animateFloatAsState(if (pressed) 0.92f else 1f, MaterialTheme.motionScheme.fastSpatialSpec(), label = "dockPlayScale")
     Surface(
@@ -466,7 +471,7 @@ private fun DockPlayButton(playing: Boolean, onClick: () -> Unit) {
             .semantics {
                 role = Role.Button
                 contentDescription = if (playing) "暂停" else "播放"
-                stateDescription = if (playing) "正在播放" else "已暂停"
+                stateDescription = if (loadingShown) "正在缓冲" else if (playing) "正在播放" else "已暂停"
             },
         shape = RectangleShape,
         color = MaterialTheme.colorScheme.primary,
@@ -474,8 +479,12 @@ private fun DockPlayButton(playing: Boolean, onClick: () -> Unit) {
         interactionSource = interaction,
     ) {
         Box(contentAlignment = Alignment.Center) {
-            Crossfade(playing, label = "dockPlayIcon") { isPlaying ->
-                Icon(if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow, null, Modifier.size(36.dp))
+            if (loadingShown) {
+                LoadingMark(Modifier.size(36.dp), MaterialTheme.colorScheme.onPrimary)
+            } else {
+                Crossfade(playing, label = "dockPlayIcon") { isPlaying ->
+                    Icon(if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow, null, Modifier.size(36.dp))
+                }
             }
         }
     }

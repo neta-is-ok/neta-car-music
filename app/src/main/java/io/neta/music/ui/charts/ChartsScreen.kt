@@ -171,6 +171,7 @@ private fun PhoneCharts(
     val window = LocalAppWindow.current
     val gutter = window.gutter
     val playingKey = state.current?.key
+    val startingKey = state.starting?.song?.key
     // 主推榜单 + 平台热歌合并成可选池，按 key 去重（同一首可能两边都有）
     val pool = remember(charts.featuredSongs, charts.hotSongs) {
         (charts.featuredSongs + charts.hotSongs).distinctBy { it.key }
@@ -265,7 +266,7 @@ private fun PhoneCharts(
                                 ) {
                                     if (hasFeatured) {
                                         Column(Modifier.weight(1.15f)) {
-                                            FeaturedChart(featured!!, featuredSongs, playingKey, actions, onMore, selection)
+                                            FeaturedChart(featured!!, featuredSongs, playingKey, startingKey, actions, onMore, selection)
                                         }
                                     }
                                     if (more.isNotEmpty()) {
@@ -284,7 +285,7 @@ private fun PhoneCharts(
                             if (hasFeatured) {
                                 item(key = "featured", contentType = "featured") {
                                     Column(Modifier.padding(horizontal = gutter)) {
-                                        FeaturedChart(featured!!, featuredSongs, playingKey, actions, onMore, selection)
+                                        FeaturedChart(featured!!, featuredSongs, playingKey, startingKey, actions, onMore, selection)
                                     }
                                 }
                             }
@@ -337,6 +338,7 @@ private fun PhoneCharts(
                                                 count = charts.hotSongs.size,
                                                 rank = index + 1,
                                                 playing = playingKey == song.key,
+                                                starting = startingKey == song.key,
                                                 container = if (isSelected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainerLow,
                                                 onClick = { if (picking) selection.toggle(song.key) else actions.play(song, charts.hotSongs) },
                                                 trailing = if (picking) {
@@ -479,6 +481,7 @@ private fun FeaturedChart(
     chart: TopList,
     songs: List<Song>,
     playingKey: String?,
+    startingKey: String?,
     actions: MusicActions,
     onMore: (Song, List<Song>) -> Unit,
     selection: SelectionState,
@@ -522,6 +525,7 @@ private fun FeaturedChart(
                 count = songs.size,
                 rank = offset + 2,
                 playing = playingKey == song.key,
+                starting = startingKey == song.key,
                 container = if (isSelected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainerLow,
                 onClick = { if (picking) selection.toggle(song.key) else actions.play(song, songs) },
                 trailing = if (picking) {

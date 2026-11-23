@@ -632,6 +632,7 @@ internal fun SwipeRowFrame(
     onClick: () -> Unit,
     onLongClick: (() -> Unit)?,
     playing: Boolean,
+    starting: Boolean = false,
     padding: PaddingValues,
     content: @Composable RowScope.(hovered: Boolean) -> Unit,
 ) {
@@ -696,7 +697,7 @@ internal fun SwipeRowFrame(
                     onLongClickLabel = onLongClick?.let { "更多操作" },
                 )
                 .semantics {
-                    if (playing) stateDescription = "正在播放"
+                    if (starting) stateDescription = "正在加载" else if (playing) stateDescription = "正在播放"
                     // 读屏「操作」菜单里挂同样的动作（读屏开着时单指横滑是下一项，不能抢）
                     val items = swipe.content.value.accessibility
                     if (items.isNotEmpty()) {

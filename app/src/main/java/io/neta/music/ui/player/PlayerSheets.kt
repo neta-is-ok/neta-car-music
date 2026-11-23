@@ -61,6 +61,7 @@ import io.neta.music.ui.components.SwitchRow
 import io.neta.music.ui.components.distinctKeys
 import io.neta.music.ui.components.tvFocusRing
 import io.neta.music.ui.formatTime
+import io.neta.music.ui.isStarting
 import kotlinx.coroutines.delay
 import java.util.Locale
 
@@ -176,6 +177,7 @@ fun QueueSheet(state: MusicUiState, actions: MusicActions, onDismiss: () -> Unit
                     count = state.queue.size,
                     onClick = { if (!unplayable.intercept(song, local)) actions.playQueueIndex(index) },
                     playing = playing,
+                    starting = state.isStarting(song),
                     dimmed = local?.gone == true,
                     badges = local?.let { copy -> { LocalSongBadge(copy) } },
                     trailing = {

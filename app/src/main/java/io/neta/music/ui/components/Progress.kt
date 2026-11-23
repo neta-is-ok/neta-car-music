@@ -21,7 +21,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.HourglassEmpty
 import androidx.compose.material3.ContainedLoadingIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearWavyProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.WavyProgressIndicatorDefaults
@@ -30,6 +33,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.derivedStateOf
@@ -64,10 +68,12 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import io.neta.music.ui.formatTime
 import io.neta.music.ui.theme.LocalAppearance
+import kotlinx.coroutines.delay
 
 /**
  * 波浪进度条：播放时有波浪，暂停或减少动画时拉平。可拖动、可点按跳转；电视上左右键快退快进 10 秒。
@@ -259,6 +265,57 @@ fun AppLoading(modifier: Modifier = Modifier, text: String? = null, contained: B
         if (text != null) {
             Text(text, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+    }
+}
+
+/** 加载持续超过这么久才显示指示：地址有缓存、本机文件这类瞬间完成的起播不闪一下转圈。 */
+private const val LOADING_SHOW_DELAY_MS = 300L
+
+/**
+ * 播放器是不是在缓冲（点了播放还没出声），由外壳提供一次。包成 [State] 让播放键自己读：
+ * 播放页、海报墙、播放条不用各自把布尔值一层层传下去，别处也不跟着重组；没有提供就是不在缓冲。
+ */
+val LocalPlaybackBuffering = compositionLocalOf<State<Boolean>?> { null }
+
+/** [loading] 持续一小会儿后才返回 true；一结束立刻变回 false。 */
+@Composable
+fun rememberLoadingShown(loading: Boolean): Boolean {
+    var shown by remember { mutableStateOf(false) }
+    LaunchedEffect(loading) {
+        shown = false
+        if (loading) {
+            delay(LOADING_SHOW_DELAY_MS)
+            shown = true
+        }
+    }
+    return loading && shown
+}
+
+/**
+ * 加载标记：转圈，开启减少动画时换成静止的沙漏。只是个图形，读屏由调用方说明（“正在加载”“正在缓冲”）。
+ */
+@Composable
+fun LoadingMark(modifier: Modifier = Modifier, color: Color = MaterialTheme.colorScheme.primary) {
+    if (LocalAppearance.current.reduceMotion) {
+        Icon(Icons.Filled.HourglassEmpty, contentDescription = null, modifier, tint = color)
+    } else {
+        LoadingIndicator(modifier, color = color)
+    }
+}
+
+/** 播放条副标题位置的加载行：小转圈加一句说明（正在获取播放地址、正在到别的平台查找）。 */
+@Composable
+fun LoadingText(text: String, modifier: Modifier = Modifier, color: Color = MaterialTheme.colorScheme.onSurfaceVariant) {
+    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+        LoadingMark(Modifier.size(16.dp), color)
+        Spacer(Modifier.width(6.dp))
+        Text(
+            text.ifBlank { "正在加载…" },
+            style = MaterialTheme.typography.bodySmall,
+            color = color,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 

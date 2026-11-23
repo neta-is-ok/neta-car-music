@@ -103,6 +103,7 @@ import io.neta.music.ui.components.selectionBackPreview
 import io.neta.music.ui.components.tvFocusRing
 import io.neta.music.ui.formatBytes
 import io.neta.music.ui.formatDuration
+import io.neta.music.ui.isStarting
 import io.neta.music.ui.library.CenteredEmpty
 import io.neta.music.ui.library.DayLabel
 import io.neta.music.ui.library.FilterRow
@@ -212,6 +213,7 @@ fun LocalMusicScreen(
             netease = netease,
             links = links,
             playing = state.current?.key,
+            starting = state.starting?.song?.key,
             onPlay = { entry, localId -> entryActions?.play(entry, localId, index) },
             onDelete = { entry, localId -> entryActions?.confirm = Triple(entry, localId, netease) },
             onLoadMore = { (context.applicationContext as? io.neta.music.MyMusicApp)?.let { scope.launch { netease.load(it, reset = false) } } },
@@ -336,6 +338,7 @@ fun LocalMusicScreen(
                     position = position,
                     count = items.size,
                     playing = state.current?.key == item.song.key,
+                    starting = state.isStarting(item.song),
                     selection = selection,
                     onPlay = {
                         when {
@@ -498,6 +501,7 @@ private fun LocalSongRow(
     position: Int,
     count: Int,
     playing: Boolean,
+    starting: Boolean,
     selection: SelectionState,
     onPlay: () -> Unit,
     onMore: () -> Unit,
@@ -526,6 +530,7 @@ private fun LocalSongRow(
         count = count,
         onClick = { if (picking) selection.toggle(song.key) else onPlay() },
         playing = playing,
+        starting = starting,
         container = if (selected) scheme.secondaryContainer else scheme.surfaceContainerLow,
         dimmed = copy.gone,
         badges = {

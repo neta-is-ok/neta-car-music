@@ -348,9 +348,11 @@ fun MyMusicApp(model: MusicViewModel) {
     }
 
     val navInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    // 底部播放条：有歌在播，或者点了歌正在起播（还没有歌在播时，点中的那首先顶上）
+    val hasPlayerBar = window.showBottomPlayerBar && (state.current != null || state.starting != null)
     val overlayBottom = when {
         window.isPhone -> phoneOverlayHeight(hasMini = state.current != null) + navInset
-        window.showBottomPlayerBar && state.current != null -> 0.dp
+        hasPlayerBar -> 0.dp
         else -> navInset
     }
     val playerVisible = state.playerOpen && state.current != null
@@ -412,6 +414,8 @@ fun MyMusicApp(model: MusicViewModel) {
     CompositionLocalProvider(
         LocalAppWindow provides window,
         LocalAppSnackbar provides snackbar,
+        // 缓冲状态包成稳定的 State 给各处的播放键自己读，只有播放键跟着重组
+        io.neta.music.ui.components.LocalPlaybackBuffering provides remember { derivedStateOf { state.buffering } },
         // 电视不滑：不给环境，整套滑动代码不进组合
         io.neta.music.ui.components.LocalSongSwipeEnv provides if (window.isTv) null else swipeEnv,
         io.neta.music.ui.components.LocalSwipeNotifier provides swipeNotifier,
@@ -513,7 +517,7 @@ fun MyMusicApp(model: MusicViewModel) {
                             }
                         }
                     }
-                    if (window.showBottomPlayerBar && state.current != null) {
+                    if (hasPlayerBar) {
                         ShellChromeTheme(pageChrome) {
                             BottomPlayerBar(state, position, actions, onOpenQueue = { queueOpen = true }, visible = !covered)
                         }
@@ -586,7 +590,7 @@ fun MyMusicApp(model: MusicViewModel) {
                         playerVisible -> navInset
                         // 让开海报墙右下角的定位和设置按钮
                         posterVisible -> navInset + if (window.isTv) 0.dp else PosterWallBottomChrome
-                        window.showBottomPlayerBar && state.current != null -> BottomPlayerBarHeight + navInset
+                        hasPlayerBar -> BottomPlayerBarHeight + navInset
                         else -> overlayBottom
                     },
                 ),

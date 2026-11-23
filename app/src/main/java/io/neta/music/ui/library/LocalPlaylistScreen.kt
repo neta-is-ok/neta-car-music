@@ -135,6 +135,7 @@ import io.neta.music.ui.components.distinctKeys
 import io.neta.music.ui.components.segmentShape
 import io.neta.music.ui.components.tvFocusRing
 import io.neta.music.ui.formatDuration
+import io.neta.music.ui.isStarting
 import io.neta.music.ui.poster.CollectionPosterOps
 import io.neta.music.ui.poster.CollectionPosterView
 import io.neta.music.ui.poster.LOCAL_PLAYLIST_LABEL
@@ -371,6 +372,7 @@ fun LocalPlaylistScreen(
                         }
                     },
                     playing = state.current?.key == song.key,
+                    starting = state.isStarting(song),
                     dimmed = local?.gone == true,
                     badges = local?.let { copy -> { LocalSongBadge(copy) } },
                     container = if (isSelected) MaterialTheme.colorScheme.secondaryContainer else rowContainer,

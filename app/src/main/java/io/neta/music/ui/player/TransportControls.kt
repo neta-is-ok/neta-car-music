@@ -77,6 +77,9 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import io.neta.music.playback.SleepTimerState
 import io.neta.music.ui.components.LocalAppWindow
+import io.neta.music.ui.components.LocalPlaybackBuffering
+import io.neta.music.ui.components.LoadingMark
+import io.neta.music.ui.components.rememberLoadingShown
 import io.neta.music.ui.components.tvFocusRing
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -228,6 +231,8 @@ internal fun CookiePlayButton(
     focusRequester: FocusRequester? = null,
     rotation: (() -> Float)? = null,
 ) {
+    // 缓冲中（点了播放还没出声）图标换成转圈，状态由外壳提供（LocalPlaybackBuffering）
+    val loadingShown = rememberLoadingShown(LocalPlaybackBuffering.current?.value == true)
     // 播放键的花瓣形容器，电视焦点环也沿花瓣描
     val playShape = MaterialShapes.Cookie12Sided.toShape()
     GroupSegment(
@@ -244,15 +249,23 @@ internal fun CookiePlayButton(
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
             .semantics {
                 contentDescription = if (playing) "暂停" else "播放"
-                stateDescription = if (playing) "正在播放" else "已暂停"
+                stateDescription = if (loadingShown) "正在缓冲" else if (playing) "正在播放" else "已暂停"
             },
     ) {
-        Crossfade(
-            playing,
-            modifier = if (rotation != null) Modifier.graphicsLayer { rotationZ = -rotation() } else Modifier,
-            label = "playIcon",
-        ) { isPlaying ->
-            Icon(if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow, null, Modifier.size(iconSize))
+        if (loadingShown) {
+            // 图标反向转回来保持正立，转圈也一样
+            LoadingMark(
+                Modifier.size(iconSize).then(if (rotation != null) Modifier.graphicsLayer { rotationZ = -rotation() } else Modifier),
+                MaterialTheme.colorScheme.onPrimary,
+            )
+        } else {
+            Crossfade(
+                playing,
+                modifier = if (rotation != null) Modifier.graphicsLayer { rotationZ = -rotation() } else Modifier,
+                label = "playIcon",
+            ) { isPlaying ->
+                Icon(if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow, null, Modifier.size(iconSize))
+            }
         }
     }
 }

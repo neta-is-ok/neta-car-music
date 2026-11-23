@@ -708,8 +708,9 @@ fun SyncConnectScreen(
 ) {
     val window = LocalAppWindow.current
     val uri = LocalUriHandler.current
-    var tvManualInput by rememberSaveable { mutableStateOf(false) }
-    val useQrSetup = window.isTv && !tvManualInput
+    val qrDevice = window.syncSetupDevice
+    var manualInput by rememberSaveable { mutableStateOf(false) }
+    val activeQrDevice = if (manualInput) null else qrDevice
     var provider by rememberSaveable {
         mutableStateOf(initialProvider?.takeIf { id -> syncLocations.any { it.first == id } } ?: "gist")
     }
@@ -731,8 +732,8 @@ fun SyncConnectScreen(
     LaunchedEffect(sync.account, sync.initialMerge, sync.error, syncing) {
         if (!connected && attempted && !syncing && sync.account != null && sync.initialMerge == null && sync.error.isBlank()) {
             connected = true
-            // 扫码连接保留成功页，等手机收到结果后再由遥控器确认返回。
-            if (!useQrSetup) onConnected()
+            // 扫码连接保留成功页，让手机可以读取结果。
+            if (activeQrDevice == null) onConnected()
         }
     }
     val leave = {
@@ -747,7 +748,7 @@ fun SyncConnectScreen(
         } catch (_: CancellationException) {
         }
     }
-    if (!useQrSetup) TvDefaultFocus(tokenFocus, provider)
+    if (activeQrDevice == null) TvDefaultFocus(tokenFocus, provider)
 
     val providerPicker: @Composable () -> Unit = {
         // 三个选项放不下“Gitee 代码片段”全名，按钮上写短名，页面副标题仍写全名（设计稿 ⑫）
@@ -853,15 +854,6 @@ fun SyncConnectScreen(
             trailingIcon = { ScanInputIcons("Gist 链接", onValueChange = { remote = it }) },
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
         )
-        if (window.isTv) {
-            Column(Modifier.padding(top = 8.dp)) {
-                InfoNote("手机扫码可避免在电视上输入长令牌。")
-                TextButton(
-                    onClick = { tvManualInput = false },
-                    modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp)),
-                ) { Text("使用扫码配置") }
-            }
-        }
         if (sync.error.isNotBlank()) {
             Box(Modifier.padding(top = 12.dp)) { ErrorBlock(sync.error) }
         }
@@ -902,39 +894,39 @@ fun SyncConnectScreen(
                 firstFocus = tokenFocus,
                 onConnectAttempt = { attempted = true },
             )
-            if (window.isTv) {
-                Column(Modifier.padding(top = 8.dp)) {
-                    InfoNote("手机扫码可避免在电视上输入密码。")
-                    TextButton(
-                        onClick = { tvManualInput = false },
-                        modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp)),
-                    ) { Text("使用扫码配置") }
-                }
-            }
         } else {
             tokenForm()
+        }
+        if (qrDevice != null) {
+            InfoNote(if (webDav) "可以在手机上填写 WebDAV 账号和密码。" else "可以在手机上填写访问令牌。")
+            TextButton(
+                onClick = { manualInput = false },
+                enabled = !syncing,
+                modifier = Modifier.padding(top = 8.dp).tvFocusRing(RoundedCornerShape(20.dp)),
+            ) { Text("使用扫码配置") }
         }
     }
 
     PageScaffold(
         title = "连接同步",
         subtitle = when {
-            useQrSetup -> "手机扫码配置"
+            activeQrDevice != null -> "手机扫码配置"
             webDav -> "WebDAV"
             gist -> "GitHub Gist"
             else -> "Gitee 代码片段"
         },
         onBack = leave,
     ) { padding ->
-        if (useQrSetup) {
-            TvSyncSetupContent(
+        if (activeQrDevice != null) {
+            QrSyncSetupContent(
+                device = activeQrDevice,
                 sync = sync,
                 actions = actions,
                 provider = provider,
                 connected = connected,
                 padding = padding,
                 onSubmission = { attempted = true },
-                onManualInput = { tvManualInput = true },
+                onManualInput = { manualInput = true },
                 onDone = onConnected,
                 infoContent = whatCard,
             )

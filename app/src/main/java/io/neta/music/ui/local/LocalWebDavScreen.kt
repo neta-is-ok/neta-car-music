@@ -34,6 +34,7 @@ import io.neta.music.ui.library.TvDefaultFocus
 import io.neta.music.ui.library.WebDavForm
 import io.neta.music.ui.library.WebDavSaveAction
 import io.neta.music.ui.library.rememberWebDavFormState
+import io.neta.music.ui.library.syncSetupDevice
 import io.neta.music.ui.library.withGutter
 import kotlinx.coroutines.launch
 
@@ -92,9 +93,15 @@ fun LocalWebDavScreen(
                         "不进同步文件。以后在音乐库同步里选 WebDAV，会直接用这个账号。",
                 )
             }
-            if (window.isTv) {
-                item(key = "tv", contentType = "note") {
-                    InfoNote("电视上输入密码不方便：也可以在音乐库同步里选 WebDAV，用手机扫码填好，是同一个账号。")
+            if (window.syncSetupDevice != null) {
+                item(key = "syncSetup", contentType = "note") {
+                    Column {
+                        InfoNote("只上传歌曲，在下方填写并保存即可。如需同时启用音乐库同步，可用手机扫码配置。")
+                        TextButton(
+                            onClick = onOpenSyncWebDav,
+                            modifier = Modifier.tvFocusRing(RoundedCornerShape(20.dp)),
+                        ) { Text("去音乐库同步") }
+                    }
                 }
             }
             item(key = "form", contentType = "form") {

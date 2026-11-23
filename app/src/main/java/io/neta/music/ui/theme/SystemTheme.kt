@@ -1,6 +1,5 @@
 package io.neta.music.ui.theme
 
-import android.annotation.SuppressLint
 import android.content.BroadcastReceiver
 import android.content.ComponentCallbacks
 import android.content.Context
@@ -52,22 +51,11 @@ class SystemTheme(private val context: Context) {
     companion object {
         private const val ACTION_THEME_CHANGED = "com.hozonauto.thememanager.ACTION_HOZON_THEME_CHANGED"
 
-        @get:SuppressLint("PrivateApi")
-        private val propertyGetter by lazy {
-            runCatching {
-                Class.forName("android.os.SystemProperties").getMethod("get", String::class.java, String::class.java)
-            }.getOrNull()
-        }
-
-        private fun property(key: String): String? = runCatching {
-            propertyGetter?.invoke(null, key, "") as? String
-        }.getOrNull()
-
         fun read(context: Context): SystemThemeState {
-            val oemNight = when (property("persist.sys.theme_night_mode")) {
+            val oemNight = when (readSystemProperty("persist.sys.theme_night_mode")) {
                 "night_mode_on" -> true
                 "night_mode_off" -> false
-                "night_mode_auto" -> when (property("persist.sys.theme.from.map")) {
+                "night_mode_auto" -> when (readSystemProperty("persist.sys.theme.from.map")) {
                     "night_mode" -> true
                     "day_mode" -> false
                     else -> null

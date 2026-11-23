@@ -1,6 +1,8 @@
 (() => {
   "use strict";
 
+  const deviceName = document.documentElement.dataset.deviceName;
+
   const providers = {
     gist: {
       description: "使用 GitHub 账号创建一个私密 Gist，或连接已有 Gist。",
@@ -25,7 +27,7 @@
     webdav: {
       description: "WebDAV：坚果云、Nextcloud、群晖或自己的服务器，同步文件放在你指定的目录里。",
       noteSync: "自建歌单、收藏和平台账号 Cookie，写进 WebDAV 目录里的 mymusic-library.json。Cookie 是明文，别把这个目录共享出去。",
-      noteExclude: "最近播放、下载文件、播放地址和播放进度。WebDAV 密码只存在电视本机，不会写进同步文件。",
+      noteExclude: `最近播放、下载文件、播放地址和播放进度。WebDAV 密码只存在${deviceName}本机，不会写进同步文件。`,
     },
   };
 
@@ -35,25 +37,25 @@
       url: "https://dav.jianguoyun.com/dav/",
       urlHelp: "坚果云的地址固定是这个，不用改。",
       passLabel: "应用密码",
-      passHelp: "坚果云要用“安全选项 › 第三方应用管理”里生成的应用密码，不是登录密码。密码由电视加密保存，不会写进同步文件。",
+      passHelp: `坚果云要用“安全选项 › 第三方应用管理”里生成的应用密码，不是登录密码。密码由${deviceName}加密保存，不会写进同步文件。`,
     },
     nextcloud: {
       url: "https://",
       urlHelp: "形如 https://你的域名/remote.php/dav/files/用户名/",
       passLabel: "应用密码",
-      passHelp: "开了两步验证时，要在 Nextcloud“设置 › 安全”里生成应用密码。密码由电视加密保存，不会写进同步文件。",
+      passHelp: `开了两步验证时，要在 Nextcloud“设置 › 安全”里生成应用密码。密码由${deviceName}加密保存，不会写进同步文件。`,
     },
     synology: {
       url: "https://",
       urlHelp: "形如 https://NAS 地址:5006/，需要先在套件中心装好 WebDAV Server。",
       passLabel: "密码",
-      passHelp: "群晖账号的密码。密码由电视加密保存，不会写进同步文件。",
+      passHelp: `群晖账号的密码。密码由${deviceName}加密保存，不会写进同步文件。`,
     },
     other: {
       url: "",
       urlHelp: "WebDAV 服务器的完整地址。",
       passLabel: "密码",
-      passHelp: "密码由电视加密保存，不会写进同步文件。",
+      passHelp: `密码由${deviceName}加密保存，不会写进同步文件。`,
     },
   };
   const presetUrls = Object.values(presets).map((item) => item.url);
@@ -200,13 +202,13 @@
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        const error = new Error(data.error || "电视没有返回有效响应，请重试。");
+        const error = new Error(data.error || `${deviceName}没有返回有效响应，请重试。`);
         error.status = response.status;
         throw error;
       }
       return data;
     } catch (error) {
-      if (error.name === "AbortError") throw new Error("连接电视超时，请检查手机与电视是否仍在同一网络。");
+      if (error.name === "AbortError") throw new Error(`连接${deviceName}超时，请检查手机与${deviceName}是否仍在同一网络。`);
       throw error;
     } finally {
       window.clearTimeout(timeout);
@@ -231,7 +233,7 @@
   function handleRequestError(error) {
     clearPoll();
     if (error.status === 410) {
-      stopAtTerminal("二维码已过期，请扫描电视上的新二维码。");
+      stopAtTerminal(`二维码已过期，请扫描${deviceName}上的新二维码。`);
       return;
     }
     setBusy(false);
@@ -241,8 +243,8 @@
   function handleStatus(data) {
     const state = data.state;
     if (state === "working" || state === "needs_tv") {
-      setBusy(true, state === "needs_tv" ? "请在电视上继续" : "正在连接…");
-      showStatus(state, data.title || "正在连接", data.detail || "电视正在处理配置。");
+      setBusy(true, state === "needs_tv" ? `请在${deviceName}上继续` : "正在连接…");
+      showStatus(state, data.title || "正在连接", data.detail || `${deviceName}正在处理配置。`);
       return;
     }
     if (state === "success") {
@@ -253,7 +255,7 @@
       davPass.value = "";
       setBusy(false);
       setSubmitLabel("已连接");
-      showStatus("success", data.title || "连接成功", data.detail || "电视已完成连接，可以关闭此页面。");
+      showStatus("success", data.title || "连接成功", data.detail || `${deviceName}已完成连接，可以关闭此页面。`);
       return;
     }
     if (state === "error") {
@@ -284,7 +286,7 @@
       if (failedPolls < 3) {
         pollTimer = window.setTimeout(poll, 1400);
       } else {
-        handleRequestError(new Error("与电视的连接已中断，请检查网络；如果电视已退出配置页，请重新扫码。"));
+        handleRequestError(new Error(`与${deviceName}的连接已中断，请检查网络；如果${deviceName}已退出配置页，请重新扫码。`));
       }
     }
   }
@@ -331,7 +333,7 @@
     hasSubmitted = true;
     failedPolls = 0;
     setBusy(true, "正在发送…");
-    showStatus("working", "正在发送配置", "请保持此页面打开，电视会继续验证并同步。");
+    showStatus("working", "正在发送配置", `请保持此页面打开，${deviceName}会继续验证并同步。`);
     try {
       const data = await request("api/connect", {
         method: "POST",
@@ -397,10 +399,10 @@
       submitButton.disabled = false;
     } catch (error) {
       if (error.status === 410) {
-        stopAtTerminal("二维码已过期，请扫描电视上的新二维码。");
+        stopAtTerminal(`二维码已过期，请扫描${deviceName}上的新二维码。`);
       } else {
         submitButton.disabled = true;
-        showFormError("无法读取电视配置会话。请确认手机与电视在同一网络，并重新扫码。");
+        showFormError(`无法读取${deviceName}配置会话。请确认手机与${deviceName}在同一网络，并重新扫码。`);
       }
     }
   }

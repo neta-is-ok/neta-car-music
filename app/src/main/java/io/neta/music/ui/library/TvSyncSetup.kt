@@ -3,16 +3,20 @@ package io.neta.music.ui.library
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -49,6 +53,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -56,6 +61,7 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import io.neta.music.AppLog
 import io.neta.music.data.sync.LocalNetworkAccess
+import io.neta.music.data.sync.SyncSetupDevice
 import io.neta.music.data.sync.SyncSetupServer
 import io.neta.music.data.sync.SyncSetupSnapshot
 import io.neta.music.data.sync.SyncSetupSubmission
@@ -65,9 +71,11 @@ import io.neta.music.data.sync.SyncStatus
 import io.neta.music.ui.ErrorBlock
 import io.neta.music.ui.InfoNote
 import io.neta.music.ui.MusicActions
+import io.neta.music.ui.components.AppWindow
 import io.neta.music.ui.components.LocalAppWindow
 import io.neta.music.ui.components.tvFocusRing
 import io.neta.music.ui.settings.QrCodeImage
+import io.neta.music.ui.theme.isNetaCar
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
@@ -83,9 +91,17 @@ private sealed interface TvSetupSession {
     data object Expired : TvSetupSession
 }
 
-/** 电视扫码连接页。网页只改变配置入口，连接与合并仍由原有 SyncCoordinator 完成。 */
+internal val AppWindow.syncSetupDevice: SyncSetupDevice?
+    get() = when {
+        isNetaCar -> SyncSetupDevice.Car
+        isTv -> SyncSetupDevice.Tv
+        else -> null
+    }
+
+/** 手机提交配置，连接与合并由本机的 SyncCoordinator 完成。 */
 @Composable
-internal fun TvSyncSetupContent(
+internal fun QrSyncSetupContent(
+    device: SyncSetupDevice,
     sync: SyncUiState,
     actions: MusicActions,
     provider: String,
@@ -96,10 +112,11 @@ internal fun TvSyncSetupContent(
     onDone: () -> Unit,
     infoContent: @Composable () -> Unit,
 ) {
-    val window = LocalAppWindow.current
+    val deviceName = device.label
     val scope = rememberCoroutineScope()
     var generation by rememberSaveable { mutableIntStateOf(0) }
     val session = rememberTvSetupSession(
+        device = device,
         generation = generation,
         provider = provider,
         sync = sync,
@@ -120,20 +137,9 @@ internal fun TvSyncSetupContent(
     val primaryFocus = remember { FocusRequester() }
     TvDefaultFocus(primaryFocus, connected)
 
-    Row(
-        Modifier
-            .fillMaxSize()
-            .padding(top = padding.calculateTopPadding())
-            .padding(horizontal = window.gutter),
-        horizontalArrangement = Arrangement.spacedBy(32.dp),
-    ) {
-        Column(
-            Modifier
-                .width(360.dp)
-                .verticalScroll(rememberScrollState())
-                .padding(bottom = padding.calculateBottomPadding()),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
+    SyncSetupLayout(
+        padding = padding,
+        instructions = {
             Surface(
                 shape = RoundedCornerShape(28.dp),
                 color = MaterialTheme.colorScheme.primaryContainer,
@@ -142,13 +148,13 @@ internal fun TvSyncSetupContent(
                 Column(Modifier.padding(20.dp)) {
                     ShapeIcon(Icons.Filled.CloudUpload)
                     Text(
-                        "手机填写，电视同步",
+                        "手机填写，${deviceName}同步",
                         Modifier.padding(top = 14.dp),
                         style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.ExtraBold,
                     )
                     Text(
-                        "1. 手机与电视连接同一网络\n2. 扫码选择 GitHub Gist、Gitee 或 WebDAV\n3. 提交后按电视提示完成连接",
+                        "1. 手机与${deviceName}连接同一网络\n2. 扫码选择 GitHub Gist、Gitee 或 WebDAV\n3. 提交后按${deviceName}提示完成连接",
                         Modifier.padding(top = 8.dp),
                         style = MaterialTheme.typography.bodyMedium,
                     )
@@ -159,20 +165,14 @@ internal fun TvSyncSetupContent(
                             .padding(top = 16.dp)
                             .then(if (!connected) Modifier.focusRequester(primaryFocus) else Modifier)
                             .tvFocusRing(RoundedCornerShape(24.dp)),
-                    ) { Text("改用遥控器输入") }
+                    ) { Text(if (device == SyncSetupDevice.Car) "在车机上填写" else "改用遥控器输入") }
                 }
             }
             infoContent()
             SyncSetupLocalNetworkHint()
-            InfoNote("网页面板只在本次配置期间开放；离开此页或电视进入后台即关闭。")
-        }
-
-        Column(
-            Modifier
-                .weight(1f)
-                .verticalScroll(rememberScrollState())
-                .padding(bottom = padding.calculateBottomPadding()),
-        ) {
+            InfoNote("离开此页或应用进入后台后，扫码配置会话会结束。")
+        },
+        status = { qrSize ->
             Surface(
                 shape = RoundedCornerShape(28.dp),
                 color = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -209,7 +209,7 @@ internal fun TvSyncSetupContent(
                                 Surface(shape = RoundedCornerShape(22.dp), color = Color.White) {
                                     QrCodeImage(
                                         text = current.url,
-                                        modifier = Modifier.size(300.dp).padding(10.dp),
+                                        modifier = Modifier.widthIn(max = qrSize).fillMaxWidth().aspectRatio(1f).padding(10.dp),
                                         description = "扫描后在手机配置 Gist、Gitee 或 WebDAV 同步",
                                     )
                                 }
@@ -252,7 +252,7 @@ internal fun TvSyncSetupContent(
                                 )
                             }
                             sync.initialMerge != null -> {
-                                InfoNote("本机和云端都有歌单，请在电视上选择首次合并方式。", "amber")
+                                InfoNote("本机和云端都有歌单，请在${deviceName}上选择首次合并方式。", "amber")
                             }
                             sync.error.isNotBlank() -> {
                                 Spacer(Modifier.height(16.dp))
@@ -271,6 +271,42 @@ internal fun TvSyncSetupContent(
                     }
                 }
             }
+        },
+    )
+}
+
+@Composable
+private fun SyncSetupLayout(
+    padding: PaddingValues,
+    instructions: @Composable ColumnScope.() -> Unit,
+    status: @Composable (Dp) -> Unit,
+) {
+    val gutter = LocalAppWindow.current.gutter
+    val bottom = padding.calculateBottomPadding()
+    BoxWithConstraints(
+        Modifier.fillMaxSize().padding(top = padding.calculateTopPadding()).padding(horizontal = gutter),
+    ) {
+        val qrSize = (maxHeight - bottom).coerceIn(144.dp, 300.dp)
+        // 左栏 360dp，栏间 32dp，二维码连同卡片留白占 348dp。
+        if (maxWidth >= 740.dp) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(32.dp)) {
+                Column(
+                    Modifier.width(360.dp).verticalScroll(rememberScrollState()).padding(bottom = bottom),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                    content = instructions,
+                )
+                Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(bottom = bottom)) {
+                    status(qrSize)
+                }
+            }
+        } else {
+            Column(
+                Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(bottom = bottom),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                status(qrSize)
+                instructions()
+            }
         }
     }
 }
@@ -286,7 +322,7 @@ private fun TvSetupConnected(sync: SyncUiState, focus: FocusRequester, onDone: (
         textAlign = TextAlign.Center,
     )
     Text(
-        "手机页面已收到结果。回到同步中心后可以立即同步或调整自动同步设置。",
+        "回到同步中心后，可以立即同步或调整自动同步设置。",
         Modifier.padding(top = 8.dp),
         style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -304,6 +340,7 @@ private fun TvSetupConnected(sync: SyncUiState, focus: FocusRequester, onDone: (
 
 @Composable
 private fun rememberTvSetupSession(
+    device: SyncSetupDevice,
     generation: Int,
     provider: String,
     sync: SyncUiState,
@@ -324,12 +361,13 @@ private fun rememberTvSetupSession(
     }
     val snapshot = rememberUpdatedState(SyncSetupSnapshot(provider, theme, sync))
     val submit = rememberUpdatedState(onSubmit)
-    return produceState<TvSetupSession>(TvSetupSession.Starting, generation, resumed, context) {
+    return produceState<TvSetupSession>(TvSetupSession.Starting, generation, resumed, context, device) {
         if (!resumed) return@produceState
         var server: SyncSetupServer? = null
         try {
             val started = withContext(Dispatchers.IO) {
                 SyncSetupServer(
+                    device = device,
                     assets = { name ->
                         runCatching {
                             context.assets.open("sync-setup/$name").use { it.readBytes() }

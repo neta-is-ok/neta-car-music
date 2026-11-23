@@ -19,7 +19,9 @@ import java.util.Collections
 internal const val SYNC_SETUP_SESSION_MILLIS = 10 * 60 * 1000L
 private const val MAX_CONNECT_BODY_BYTES = 16 * 1024L
 
-/** TV 当前配色会作为 theme.css 发给面板；这里只包含颜色，不包含账号或令牌。 */
+internal enum class SyncSetupDevice(val label: String) { Tv("电视"), Car("车机") }
+
+/** 本机当前配色会作为 theme.css 发给面板。 */
 internal data class SyncSetupTheme(
     val background: String = "#0F1513",
     val surface: String = "#151B19",
@@ -120,6 +122,7 @@ internal class SyncSetupSession(
     private val onSubmit: (SyncSetupSubmission) -> Unit,
     private val clock: () -> Long = System::currentTimeMillis,
     sessionMillis: Long = SYNC_SETUP_SESSION_MILLIS,
+    private val deviceName: String = SyncSetupDevice.Tv.label,
 ) {
     val accessToken: String = ByteArray(16).also(SecureRandom()::nextBytes)
         .joinToString("") { "%02x".format(it.toInt() and 0xff) }
@@ -164,7 +167,7 @@ internal class SyncSetupSession(
             onSubmit(SyncSetupSubmission(submission.provider, token, submission.remote.trim(), webDav))
             SyncSetupSubmitResult.Accepted
         } catch (_: Exception) {
-            submissionError = "电视没有接收这次配置，请返回电视重试。"
+            submissionError = "${deviceName}没有接收这次配置，请返回${deviceName}重试。"
             SyncSetupSubmitResult.Failed
         }
     }
@@ -175,7 +178,7 @@ internal class SyncSetupSession(
         val provider = submittedProvider ?: return SyncSetupStatus(
             phase = SyncSetupPhase.Idle,
             title = "等待配置",
-            detail = "填写访问令牌或 WebDAV 账号后，电视会验证并完成连接。",
+            detail = "填写访问令牌或 WebDAV 账号后，${deviceName}会验证并完成连接。",
             provider = current.provider.takeIf { it in PROVIDERS } ?: "gist",
         )
         val sync = current.sync
@@ -192,14 +195,14 @@ internal class SyncSetupSession(
             )
             sync.initialMerge != null -> SyncSetupStatus(
                 SyncSetupPhase.NeedsTv,
-                "请在电视上继续",
-                "本机和云端都有歌单。请在电视上选择首次合并方式，此页面会自动更新。",
+                "请在${deviceName}上继续",
+                "${deviceName}和云端都有歌单。请在${deviceName}上选择首次合并方式，此页面会自动更新。",
                 provider,
             )
             sync.status == SyncStatus.Syncing -> SyncSetupStatus(
                 SyncSetupPhase.Working,
                 "正在连接",
-                sync.phase.ifBlank { "电视正在验证账号并读取云端文件。" },
+                sync.phase.ifBlank { "${deviceName}正在验证账号并读取云端文件。" },
                 provider,
             )
             sync.error.isNotBlank() && (observedTransition || clock() - submittedAt >= STALE_ERROR_GRACE_MILLIS) ->
@@ -218,8 +221,8 @@ internal class SyncSetupSession(
             )
             else -> SyncSetupStatus(
                 SyncSetupPhase.Working,
-                "正在等待电视",
-                "配置已发送，电视很快会显示处理进度。",
+                "正在等待$deviceName",
+                "配置已发送，${deviceName}很快会显示处理进度。",
                 provider,
             )
         }
@@ -233,9 +236,9 @@ internal class SyncSetupSession(
      */
     private fun successDetail(provider: String, sync: SyncUiState): String {
         val certificate = sync.webDav?.certificate?.takeIf { provider == WebDavSyncProvider.ID && !it.systemTrusted }
-            ?: return "电视已连接 ${providerLabel(provider)}，可以关闭此页面。"
-        return "电视已连接 WebDAV，并记下了服务器的${WebDavMessages.certificate(certificate)}。" +
-            "以后证书变了，电视会停下来提醒。可以关闭此页面。"
+            ?: return "${deviceName}已连接 ${providerLabel(provider)}，可以关闭此页面。"
+        return "${deviceName}已连接 WebDAV，并记下了服务器的${WebDavMessages.certificate(certificate)}。" +
+            "以后证书变了，${deviceName}会停下来提醒。可以关闭此页面。"
     }
 
     private fun isValidWebDav(account: WebDavAccount): Boolean =
@@ -248,9 +251,9 @@ internal class SyncSetupSession(
     private fun safeSetupError(message: String): String = when {
         message.startsWith("令牌无效") || message.startsWith("令牌权限") || message.startsWith("令牌无法读取") -> message
         message.startsWith("找不到云端文件") || message.startsWith("同步文件") || message.startsWith("云端") -> message
-        message.startsWith("网络不可达") -> "网络不可达，请检查电视网络连接后重试。"
-        message.startsWith("同步服务返回错误") -> "同步服务暂时不可用，请稍后重试；详细错误已显示在电视上。"
-        else -> "电视未能完成连接。请查看电视上的错误详情，修正后在此重试。"
+        message.startsWith("网络不可达") -> "网络不可达，请检查${deviceName}的网络连接后重试。"
+        message.startsWith("同步服务返回错误") -> "同步服务暂时不可用，请稍后重试。详细错误已显示在${deviceName}上。"
+        else -> "${deviceName}未能完成连接。请查看${deviceName}上的错误详情，修正后在此重试。"
     }
 
     private companion object {
@@ -316,7 +319,7 @@ internal fun findSyncSetupAddress(): InetAddress? = runCatching {
 }.getOrNull()
 
 /**
- * 仅在电视连接页运行的局域网 HTTP 面板。
+ * 仅在扫码配置页运行的局域网 HTTP 面板。
  * 二维码持有随机会话路径；接口只接受同源 JSON POST，不开放令牌读取或任意文件访问。
  */
 internal class SyncSetupServer(
@@ -326,9 +329,11 @@ internal class SyncSetupServer(
     private val bindHost: String? = null,
     clock: () -> Long = System::currentTimeMillis,
     sessionMillis: Long = SYNC_SETUP_SESSION_MILLIS,
+    device: SyncSetupDevice = SyncSetupDevice.Tv,
 ) : NanoHTTPD(bindHost, 0) {
     private val snapshot = snapshot
-    private val session = SyncSetupSession(snapshot, onSubmit, clock, sessionMillis)
+    private val deviceName = device.label
+    private val session = SyncSetupSession(snapshot, onSubmit, clock, sessionMillis, deviceName)
     private val sessionPath = "/s/${session.accessToken}/"
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -355,7 +360,7 @@ internal class SyncSetupServer(
             return errorResponse(Response.Status.FORBIDDEN, "仅允许局域网设备访问")
         }
         if (this.session.isExpired()) {
-            return errorResponse(Response.Status.GONE, "二维码已过期，请扫描电视上的新二维码")
+            return errorResponse(Response.Status.GONE, "二维码已过期，请扫描${deviceName}上的新二维码")
         }
         val uri = session.uri.orEmpty()
         if (!uri.startsWith(sessionPath)) {
@@ -390,7 +395,7 @@ internal class SyncSetupServer(
 
     private fun connect(http: IHTTPSession): Response {
         if (http.header("sec-fetch-site") == "cross-site" || !http.hasSameOrigin()) {
-            return errorResponse(Response.Status.FORBIDDEN, "请从电视提供的配置页面提交")
+            return errorResponse(Response.Status.FORBIDDEN, "请从${deviceName}提供的配置页面提交")
         }
         if (http.header("x-mymusic-setup") != "1" ||
             http.header("content-type")?.substringBefore(';')?.trim() != "application/json"
@@ -423,12 +428,12 @@ internal class SyncSetupServer(
                     SyncSetupStatus(
                         SyncSetupPhase.Working,
                         "配置已发送",
-                        "电视已收到配置，正在开始验证。",
+                        "${deviceName}已收到配置，正在验证。",
                         request.provider,
                     ),
                 ),
             )
-            SyncSetupSubmitResult.Busy -> errorResponse(Response.Status.CONFLICT, "电视正在处理配置，请稍候")
+            SyncSetupSubmitResult.Busy -> errorResponse(Response.Status.CONFLICT, "${deviceName}正在处理配置，请稍候")
             SyncSetupSubmitResult.Invalid -> errorResponse(
                 Response.Status.BAD_REQUEST,
                 if (request.provider == WebDavSyncProvider.ID) {
@@ -438,7 +443,7 @@ internal class SyncSetupServer(
                 },
             )
             SyncSetupSubmitResult.Expired -> errorResponse(Response.Status.GONE, "二维码已过期，请重新扫码")
-            SyncSetupSubmitResult.Failed -> errorResponse(Response.Status.INTERNAL_ERROR, "电视没有接收配置，请重试")
+            SyncSetupSubmitResult.Failed -> errorResponse(Response.Status.INTERNAL_ERROR, "${deviceName}没有接收配置，请重试")
         }
     }
 
@@ -481,7 +486,9 @@ internal class SyncSetupServer(
 
     private fun asset(name: String, mime: String, html: Boolean = false): Response {
         val bytes = assets(name) ?: return errorResponse(Response.Status.NOT_FOUND, "面板资源未打包")
-        return textResponse(Response.Status.OK, mime, String(bytes, Charsets.UTF_8), html)
+        val content = bytes.toString(Charsets.UTF_8)
+        val body = if (html) content.replace("{{deviceName}}", deviceName) else content
+        return textResponse(Response.Status.OK, mime, body, html)
     }
 
     private fun errorResponse(status: Response.Status, message: String): Response = jsonResponse(

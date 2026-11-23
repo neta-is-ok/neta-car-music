@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-device-name="{{deviceName}}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -19,7 +19,7 @@
       </span>
       <span>吒友爱听</span>
     </div>
-    <span class="local-badge"><span class="local-dot" aria-hidden="true"></span>与电视直连</span>
+    <span class="local-badge"><span class="local-dot" aria-hidden="true"></span>与{{deviceName}}直连</span>
   </header>
 
   <main class="page">
@@ -28,8 +28,8 @@
         <svg viewBox="0 0 32 32" fill="none"><path d="M9 24h14a6 6 0 0 0 .7-11.9A8 8 0 0 0 8.3 10 7 7 0 0 0 9 24Z" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><path d="M16 20V11m0 0-3.5 3.5M16 11l3.5 3.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </div>
       <div>
-        <h1 id="page-title">在手机上完成电视同步</h1>
-        <p>不用遥控器输入长令牌或密码。配置只发送到这台电视，验证后由电视加密保存。</p>
+        <h1 id="page-title">在手机上配置{{deviceName}}同步</h1>
+        <p>在手机上填写令牌或密码。配置只发送到{{deviceName}}，验证后由{{deviceName}}加密保存。</p>
       </div>
     </section>
 
@@ -91,7 +91,7 @@
                 <input id="dav-pass" name="dav-pass" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="1024" aria-describedby="dav-pass-help">
                 <button id="toggle-dav-pass" class="reveal-button" type="button" aria-label="显示密码" aria-pressed="false">显示</button>
               </div>
-              <p id="dav-pass-help" class="field-help">坚果云要用“安全选项 › 第三方应用管理”里生成的应用密码，不是登录密码。密码由电视加密保存，不会写进同步文件。</p>
+              <p id="dav-pass-help" class="field-help">坚果云要用“安全选项 › 第三方应用管理”里生成的应用密码，不是登录密码。密码由{{deviceName}}加密保存，不会写进同步文件。</p>
             </div>
             <div class="field">
               <label for="dav-dir">目录</label>
@@ -114,7 +114,7 @@
           </button>
           <p class="privacy-note">
             <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><rect x="4.5" y="8.5" width="11" height="8" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M7 8.5v-2a3 3 0 0 1 6 0v2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-            请在手机与电视连接同一可信局域网时使用。
+            请在手机与{{deviceName}}连接同一可信局域网时使用。
           </p>
         </form>
 
@@ -125,7 +125,7 @@
             <p id="status-detail"></p>
           </div>
         </section>
-        <noscript><p class="inline-error">请启用浏览器 JavaScript，才能将配置发送给电视。</p></noscript>
+        <noscript><p class="inline-error">请启用浏览器 JavaScript，才能将配置发送给{{deviceName}}。</p></noscript>
       </section>
 
       <aside class="side-content">
@@ -139,14 +139,14 @@
         <section class="next-steps" aria-labelledby="next-title">
           <h2 id="next-title">接下来</h2>
           <ol>
-            <li>电视验证令牌或 WebDAV 账号，并创建或读取云端文件。</li>
-            <li>如果本机和云端都有歌单，在电视大屏上选择首次合并方式。</li>
+            <li>{{deviceName}}验证令牌或 WebDAV 账号，并创建或读取云端文件。</li>
+            <li>如果{{deviceName}}和云端都有歌单，请在{{deviceName}}上选择首次合并方式。</li>
           </ol>
         </section>
       </aside>
     </div>
   </main>
 
-  <footer>此页面由电视临时提供，不经过第三方服务器。离开电视配置页后自动关闭。</footer>
+  <footer>此页面由{{deviceName}}临时提供，不经过第三方服务器。离开{{deviceName}}配置页后自动关闭。</footer>
 </body>
 </html>

@@ -82,7 +82,7 @@ android.media.metadata.LYRIC String = 整首带时间戳 LRC，仅 ready 时存�
 
 ## MCP 点歌服务
 
-供同一台车机上的美式奔奔 AI 助手点歌：本机 `127.0.0.1:18766` 的无认证 Streamable HTTP MCP，提供 `play_song`（单曲点播）、`play_music_queue`（歌手 / 风格连续播放队列）、`get_playback_state` 三个工具。在设置 → 奔奔 AI 点歌中一键绑定；注册信息与协议细节见 [MusicMcpServer.kt](app/src/main/java/io/neta/music/mcp/MusicMcpServer.kt)。
+在设置 → 奔奔 AI 点歌中一键绑定美式奔奔后，可以说「播放《晴天》」「来点摇滚」或「收藏这首歌」。本机 MCP 端点 `127.0.0.1:18766` 提供 `play_song`（单曲点播）、`play_music_queue`（连续点歌）、`favorite_song`（收藏当前歌曲）和 `get_playback_state`（查询播放状态）。注册信息与协议细节见 [MusicMcpServer.kt](app/src/main/java/io/neta/music/mcp/MusicMcpServer.kt)。
 
 ## 歌词获取
 
